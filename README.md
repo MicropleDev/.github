@@ -10,9 +10,9 @@ GitHub treats a repo named `.github` specially: its `profile/README.md` is the p
 |---|---|
 | `profile/README.md` | Public org-page README |
 | `.github/workflows/` | Reusable workflows (`workflow_call`) shared across org repos |
-| `.github/actions/` | Composite actions shared across org repos |
-| `.github/scripts/` | Shared scripts that workflows can source |
 | `docs/` | Conventions, signing, and contributor docs |
+| (future) `.github/actions/` | Composite actions shared across org repos — lands with W7-rest / W8 (minisign sign) |
+| (future) `.github/scripts/` | Shared shell scripts that workflows can source — added when something actually needs to be shared |
 
 ## Reusable workflows
 

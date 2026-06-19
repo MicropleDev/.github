@@ -28,6 +28,12 @@
 # - Version embedded via ldflags into {version_pkg}.Version / GitCommit / BuildDate
 #
 # Signing (minisign with the DEV-channel key) lands in story W8.
+#
+# Re-run semantics: this workflow is fully idempotent. If HEAD already has a
+# dev tag (e.g. a previous run pushed the tag but failed during release
+# upload), the `version` step REUSES that tag instead of computing a new
+# one, then build/test/publish all run again so the release can be repaired.
+# Only the manual `git tag` push is conditional on whether the tag exists.
 
 name: Go service release (dev)
 
@@ -48,9 +54,14 @@ on:
         type: string
     outputs:
       version:
+        description: "Computed or reused version without the 'v' prefix."
         value: ${{ jobs.release.outputs.version }}
       tag:
+        description: "Computed or reused tag including the 'v' prefix."
         value: ${{ jobs.release.outputs.tag }}
+      tag_existed:
+        description: "true if HEAD already had a dev tag and this run reused it (recovery path)."
+        value: ${{ jobs.release.outputs.tag_existed }}
 
 permissions:
   contents: write
@@ -66,62 +77,43 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     outputs:
-      # Callers can rely on `version`/`tag` being populated in both the
-      # "newly cut" path (steps.version) and the "already tagged, skipped"
-      # path (steps.tag_check). The `||` fallback fires when steps.version
-      # was skipped.
-      version: ${{ steps.version.outputs.version || steps.tag_check.outputs.existing_version }}
-      tag: ${{ steps.version.outputs.tag || steps.tag_check.outputs.existing_tag }}
-      skip: ${{ steps.tag_check.outputs.skip }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      tag_existed: ${{ steps.version.outputs.tag_existed }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # need full tag history for version derivation
 
-      # Idempotency guard: if HEAD already carries a dev tag (e.g. workflow
-      # re-run after a successful release, or a previous attempt that pushed
-      # the tag but failed downstream), set skip=true AND emit the existing
-      # tag/version so the job's outputs stay populated for downstream
-      # consumers. Every subsequent step is gated on skip!=true. The
-      # workflow still ends with a green check — there's just nothing new
-      # to do.
-      - name: Check for existing dev tag on HEAD
-        id: tag_check
+      # Single source of truth for the version. Two paths:
+      # - If HEAD already has a dev tag (rerun after partial failure):
+      #   REUSE that tag. Build will produce the same binary version,
+      #   publish step will (re)upload assets to the existing release.
+      # - Otherwise: derive a new dev tag from the latest stable + suffix.
+      - name: Resolve version (reuse existing dev tag if present, else compute new)
+        id: version
         run: |
           set -euo pipefail
           EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.' | head -n1 || true)
           if [ -n "$EXISTING" ]; then
-            {
-              echo "skip=true"
-              echo "existing_tag=$EXISTING"
-              echo "existing_version=${EXISTING#v}"
-            } >> "$GITHUB_OUTPUT"
-            echo "::notice::HEAD already has dev tag $EXISTING; skipping build/tag/release."
+            TAG="$EXISTING"
+            VERSION="${TAG#v}"
+            TAG_EXISTED=true
+            echo "::notice::Reusing existing dev tag $TAG (rerun / recovery path)."
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            LATEST=$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+            BASE=${LATEST#v}
+            BASE=${BASE:-0.0.0}
+            IFS='.' read -r MAJ MIN PAT <<<"$BASE"
+            PAT=$((PAT+1))
+            NEXT="${MAJ}.${MIN}.${PAT}"
+            STAMP=$(date -u +%Y%m%d)
+            SHORT=$(git rev-parse --short HEAD)
+            VERSION="${NEXT}-dev.${STAMP}.${SHORT}"
+            TAG="v${VERSION}"
+            TAG_EXISTED=false
+            echo "Computed new dev: $TAG (base v${NEXT} = prior stable v${BASE:-0.0.0} + 1 patch)"
           fi
-
-      - if: steps.tag_check.outputs.skip != 'true'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Compute dev version (next-patch base + suffix)
-        if: steps.tag_check.outputs.skip != 'true'
-        id: version
-        run: |
-          set -euo pipefail
-          LATEST=$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
-          BASE=${LATEST#v}
-          BASE=${BASE:-0.0.0}
-          IFS='.' read -r MAJ MIN PAT <<<"$BASE"
-          PAT=$((PAT+1))
-          NEXT="${MAJ}.${MIN}.${PAT}"
-          STAMP=$(date -u +%Y%m%d)
-          SHORT=$(git rev-parse --short HEAD)
-          VERSION="${NEXT}-dev.${STAMP}.${SHORT}"
-          TAG="v${VERSION}"
           GIT_COMMIT=$(git rev-parse HEAD)
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           {
@@ -129,15 +121,18 @@ jobs:
             echo "tag=$TAG"
             echo "git_commit=$GIT_COMMIT"
             echo "build_date=$BUILD_DATE"
+            echo "tag_existed=$TAG_EXISTED"
           } >> "$GITHUB_OUTPUT"
-          echo "Computed dev: $TAG (base v${NEXT} = prior stable v${BASE:-0.0.0} + 1 patch)"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Run tests
-        if: steps.tag_check.outputs.skip != 'true'
         run: go test -race ./...
 
       - name: Build linux/arm64
-        if: steps.tag_check.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
@@ -156,8 +151,8 @@ jobs:
       # TODO(W8): sign $ASSET with the dev minisign key (WDOS_DEV_MINISIGN_KEY /
       # WDOS_DEV_MINISIGN_PASSWORD), produce $ASSET.minisig, add it below.
 
-      - name: Create + push tag
-        if: steps.tag_check.outputs.skip != 'true'
+      - name: Create + push tag (only when newly computed)
+        if: steps.version.outputs.tag_existed != 'true'
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -165,8 +160,10 @@ jobs:
           git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.binary_name }} ${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
-      - name: Publish GitHub Release (prerelease)
-        if: steps.tag_check.outputs.skip != 'true'
+      # softprops/action-gh-release@v2 is idempotent: creates the release if
+      # missing, updates assets if it exists. So a rerun on a previously-tagged
+      # commit safely repairs a failed first attempt.
+      - name: Publish GitHub Release (prerelease, idempotent)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
