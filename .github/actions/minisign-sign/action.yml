@@ -130,33 +130,50 @@ runs:
         printf '%s\n' "$MINISIGN_KEY" > "$KEY_FILE"
         chmod 600 "$KEY_FILE"
 
-        # Diagnostic: validate the file shape BEFORE handing it to
-        # minisign, so we get an actionable error if the secret was
-        # pasted wrong (most common: literal '\n' instead of newlines —
-        # turns the 2-line key file into 1 line and minisign emits an
-        # opaque "Error while loading the secret key file").
-        #
-        # We only print the first line (which is the canonical, fixed
-        # public string "untrusted comment: minisign encrypted secret
-        # key" — NOT the base64 secret). The line count is enough to
-        # diagnose the escaped-newline trap.
+        # Validate file shape BEFORE handing to minisign so the user gets
+        # an actionable error instead of minisign's opaque "Error while
+        # loading the secret key file". Counts and the first byte are
+        # safe to print — they're not enough to leak the key, but they
+        # cover the common paste mistakes.
         LINE_COUNT=$(wc -l < "$KEY_FILE")
+        BYTE_COUNT=$(wc -c < "$KEY_FILE")
+        FIRST_LINE_BYTES=$(head -n 1 "$KEY_FILE" | wc -c | tr -d ' ')
+        FIRST_BYTE_HEX=$(head -c 1 "$KEY_FILE" | od -An -tx1 | tr -d ' \n')
         FIRST_LINE=$(head -n 1 "$KEY_FILE")
-        echo "Key file shape: $LINE_COUNT line(s)"
-        echo "First line: $FIRST_LINE"
+
+        echo "Key file diagnostic:"
+        echo "  lines: $LINE_COUNT"
+        echo "  total bytes: $BYTE_COUNT"
+        echo "  first line bytes: $FIRST_LINE_BYTES"
+        echo "  first byte (hex): $FIRST_BYTE_HEX (expected 75 = 'u')"
+
         case "$FIRST_LINE" in
           "untrusted comment: minisign"*) ;;
           *)
-            echo "::error::Secret value doesn't look like a minisign key file."
-            echo "::error::Expected first line to start with 'untrusted comment: minisign...'."
-            echo "::error::Got: '$FIRST_LINE'"
-            echo "::error::Most common cause: pasted with escaped \\n instead of actual newlines (entire file collapsed to 1 line). Re-copy the key file as-is (preserving line breaks) and update the secret value."
+            echo "::error::WDOS_*_MINISIGN_KEY secret value doesn't look like a minisign key file."
+            echo "::error::"
+            echo "::error::Expected: a 2-line file"
+            echo "::error::  Line 1: 'untrusted comment: minisign encrypted secret key' (49 chars)"
+            echo "::error::  Line 2: base64 key starting with 'RW' (~90 chars)"
+            echo "::error::"
+            echo "::error::From this run: $LINE_COUNT line(s), $BYTE_COUNT total bytes, first byte=0x$FIRST_BYTE_HEX (expected 0x75='u')."
+            case "$FIRST_BYTE_HEX" in
+              22) echo "::error::First byte is '\"' (0x22) — pasted with surrounding quotes. Remove them when updating the secret." ;;
+              27) echo "::error::First byte is \"'\" (0x27) — pasted with surrounding quotes. Remove them when updating the secret." ;;
+              20|09) echo "::error::First byte is whitespace (0x$FIRST_BYTE_HEX) — strip leading whitespace before pasting." ;;
+              ef) echo "::error::First byte is 0xEF — likely UTF-8 BOM (0xEF 0xBB 0xBF). Strip the BOM (some editors add it on save)." ;;
+              52) echo "::error::First byte is 'R' (0x52) — looks like you pasted only the base64 line, missing the 'untrusted comment:' header line. Include the full file." ;;
+              "") echo "::error::Couldn't read first byte — file may be empty or unreadable." ;;
+              *) echo "::error::Unexpected first byte. Verify locally: 'head -c 5 wdos-dev.key' should print 'untru'." ;;
+            esac
+            echo "::error::"
+            echo "::error::To re-paste correctly: open wdos-dev.key in a plain editor, select all, copy, paste into the secret value. Don't add quotes, don't escape newlines."
             exit 1
             ;;
         esac
         if [ "$LINE_COUNT" -lt 2 ]; then
-          echo "::error::Key file collapsed to $LINE_COUNT line(s). A minisign secret key has 2 lines (comment + base64 key)."
-          echo "::error::Most likely the secret was pasted with literal '\\n' substrings. Re-paste preserving actual line breaks."
+          echo "::error::Key file is only $LINE_COUNT line(s). A minisign key has 2 (comment + base64)."
+          echo "::error::Most likely the secret was pasted with literal '\\n' (backslash-n) instead of actual newlines. Re-paste preserving real line breaks."
           exit 1
         fi
 
