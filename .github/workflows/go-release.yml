@@ -1,0 +1,184 @@
+# Reusable workflow for cutting a STABLE release of a Go service.
+#
+# Used by heisenberg, weather-server, sounddog, AlphaDog. Per-repo wrapper
+# example:
+#
+#   # .github/workflows/release.yml in a consumer repo
+#   name: Release
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         bump_type:
+#           type: choice
+#           options: [patch, minor, major]
+#           required: true
+#   jobs:
+#     release:
+#       uses: MicropleDev/.github/.github/workflows/go-release.yml@main
+#       with:
+#         binary_name: heisenberg
+#         version_pkg: heisenberg/pkg/version
+#         build_path: .
+#         bump_type: ${{ inputs.bump_type }}
+#
+# Conventions enforced here (see also [[feedback_ota_release_scheme]]):
+# - Stable tag form: v{x.y.z} (bare semver)
+# - Asset name: {binary_name}-{version}-linux-arm64 (no `v` in filename)
+# - Sidecar: {asset}.sha256
+# - prerelease: false
+# - Version embedded via ldflags into {version_pkg}.Version / GitCommit / BuildDate
+#
+# Signing (minisign) lands in story W8 — it will add a step after build
+# that produces {asset}.minisig using the stable-channel key.
+
+name: Go service release (stable)
+
+on:
+  workflow_call:
+    inputs:
+      binary_name:
+        description: "Output binary name (e.g. 'heisenberg')."
+        required: true
+        type: string
+      version_pkg:
+        description: "Go import path of the version package (e.g. 'heisenberg/pkg/version')."
+        required: true
+        type: string
+      build_path:
+        description: "Go build target relative to repo root (e.g. '.' or './cmd/server')."
+        required: true
+        type: string
+      bump_type:
+        description: "Semver bump applied to the latest v{x.y.z} tag."
+        required: true
+        type: string  # patch | minor | major
+    outputs:
+      version:
+        description: "Computed version without the 'v' prefix (e.g. '0.1.0')."
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        description: "Computed tag including the 'v' prefix (e.g. 'v0.1.0')."
+        value: ${{ jobs.release.outputs.tag }}
+
+permissions:
+  contents: write
+
+# Serialize stable cuts per (caller repo, ref) so two concurrent
+# workflow_dispatch runs can't race on tag creation. Never cancel an
+# in-flight stable release — it may already have pushed the tag.
+concurrency:
+  group: go-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Validate bump_type
+        run: |
+          case "${{ inputs.bump_type }}" in
+            patch|minor|major) ;;
+            *) echo "::error::bump_type must be patch|minor|major, got '${{ inputs.bump_type }}'"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0  # need full tag history for version derivation
+
+      # Idempotency guard for the stable workflow. If a previous run pushed
+      # the tag but failed during release upload (or any later step), the
+      # operator should explicitly resolve that — either re-upload assets
+      # to the existing release manually, or delete the partial tag/release
+      # and rerun. Silently cutting v{x.y.z+1} on the next click would be
+      # surprising and could fragment the release history.
+      - name: Refuse if HEAD already has a stable tag
+        run: |
+          set -euo pipefail
+          if EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1); [ -n "$EXISTING" ]; then
+            echo "::error::HEAD already has stable tag $EXISTING. Refuse to cut another stable on the same commit. Resolve manually (re-upload release assets to $EXISTING, or delete the partial tag and rerun)."
+            exit 1
+          fi
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compute version (from latest v{x.y.z} tag + bump)
+        id: version
+        run: |
+          set -euo pipefail
+          LATEST=$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          BASE=${LATEST#v}
+          BASE=${BASE:-0.0.0}
+          IFS='.' read -r MAJ MIN PAT <<<"$BASE"
+          case "${{ inputs.bump_type }}" in
+            major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
+            minor) MIN=$((MIN+1)); PAT=0 ;;
+            patch) PAT=$((PAT+1)) ;;
+          esac
+          VERSION="${MAJ}.${MIN}.${PAT}"
+          TAG="v${VERSION}"
+          GIT_COMMIT=$(git rev-parse HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "git_commit=$GIT_COMMIT"
+            echo "build_date=$BUILD_DATE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Computed stable: $TAG (from base v${BASE}, bump=${{ inputs.bump_type }})"
+
+      - name: Refuse to overwrite an existing tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "::error::Tag ${{ steps.version.outputs.tag }} already exists. Pick a different bump_type."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Build linux/arm64
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ASSET="${{ inputs.binary_name }}-${VERSION}-linux-arm64"
+          LDFLAGS="-s -w \
+            -X '${{ inputs.version_pkg }}.Version=${VERSION}' \
+            -X '${{ inputs.version_pkg }}.GitCommit=${GIT_COMMIT}' \
+            -X '${{ inputs.version_pkg }}.BuildDate=${BUILD_DATE}'"
+          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/$ASSET" "${{ inputs.build_path }}"
+          (cd dist && sha256sum "$ASSET" > "${ASSET}.sha256")
+          echo "asset=$ASSET" >> "$GITHUB_ENV"
+
+      # TODO(W8): sign $ASSET with the stable minisign key, produce $ASSET.minisig,
+      # add it to the release files list below.
+
+      - name: Create + push tag
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.binary_name }} ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub Release
+        # SHA-pinned for supply-chain hardening; bump intentionally when reviewing
+        # https://github.com/softprops/action-gh-release/releases.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "${{ inputs.binary_name }} ${{ steps.version.outputs.tag }}"
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64
+            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64.sha256
