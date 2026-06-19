@@ -109,5 +109,9 @@ runs:
           echo "::error::Expected signature at $SIG_PATH not found after minisign -S"
           exit 1
         fi
-        echo "signature_path=$SIG_PATH" >> "$GITHUB_OUTPUT"
-        echo "::notice::Signed: $SIG_PATH ($(stat -c%s "$SIG_PATH") bytes)"
+        # Resolve to an absolute path so the signature_path output matches the
+        # action's documented contract regardless of whether asset_path was
+        # passed relative or absolute by the caller.
+        ABS_SIG_PATH=$(readlink -f "$SIG_PATH")
+        echo "signature_path=$ABS_SIG_PATH" >> "$GITHUB_OUTPUT"
+        echo "::notice::Signed: $ABS_SIG_PATH ($(stat -c%s "$ABS_SIG_PATH") bytes)"

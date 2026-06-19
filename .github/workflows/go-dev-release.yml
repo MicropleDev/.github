@@ -147,6 +147,7 @@ jobs:
             -X '${{ inputs.version_pkg }}.BuildDate=${BUILD_DATE}'"
           GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/$ASSET" "${{ inputs.build_path }}"
           (cd dist && sha256sum "$ASSET" > "${ASSET}.sha256")
+          echo "asset=$ASSET" >> "$GITHUB_ENV"
 
       # Sign with the DEV-channel minisign key. Caller must pass
       # `secrets: inherit` so WDOS_DEV_MINISIGN_KEY/PASSWORD are visible
@@ -155,7 +156,7 @@ jobs:
       - name: Sign artifact (dev key)
         uses: MicropleDev/.github/.github/actions/minisign-sign@main
         with:
-          asset_path: dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64
+          asset_path: dist/${{ env.asset }}
           key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
           password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
           trusted_comment: "${{ inputs.binary_name }} ${{ steps.version.outputs.tag }} (dev)"
@@ -182,6 +183,6 @@ jobs:
           prerelease: true
           fail_on_unmatched_files: true
           files: |
-            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64
-            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64.sha256
-            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64.minisig
+            dist/${{ env.asset }}
+            dist/${{ env.asset }}.sha256
+            dist/${{ env.asset }}.minisig
