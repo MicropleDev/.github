@@ -12,7 +12,7 @@ Conventions enforced by the reusable workflows in this repo. Cross-references th
 - Tag string alone identifies the channel — no API call needed.
 - The `prerelease` API flag also matches (belt-and-suspenders).
 - Filenames drop the `v` prefix (tag `v0.1.0` → asset `heisenberg-0.1.0-linux-arm64`).
-- Dev base = `git tag -l 'v*.*.*' | sort -V | tail -1` + 1 patch. NOT a `VERSION` file.
+- Dev base = `git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1` + 1 patch. The `grep` filter is **mandatory** — without it, dev tags like `v1.2.3-dev.…` match `v*.*.*` and corrupt the base derivation. NOT a `VERSION` file (drift trap).
 - Dev timestamp is `date -u +%Y%m%d` (date only — shortsha disambiguates intra-day).
 
 ## Cadence

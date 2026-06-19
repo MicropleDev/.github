@@ -55,23 +55,49 @@ on:
 permissions:
   contents: write
 
+# Serialize dev cuts per (caller repo, ref). Rapid pushes to main can otherwise
+# race on tag creation. Never cancel an in-flight run — it may already have
+# pushed a tag and partial cancellation leaves orphaned tags.
+concurrency:
+  group: go-dev-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      skip: ${{ steps.tag_check.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      # Idempotency guard: if HEAD already carries a dev tag (e.g. workflow
+      # re-run after a successful release, or a previous attempt that pushed
+      # the tag but failed downstream), set skip=true and gate every
+      # subsequent step on it. The workflow still ends with a green check —
+      # there's just nothing new to do.
+      - name: Check for existing dev tag on HEAD
+        id: tag_check
+        run: |
+          set -euo pipefail
+          if git tag --points-at HEAD | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::HEAD already has a dev tag; skipping build/tag/release."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.tag_check.outputs.skip != 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Compute dev version (next-patch base + suffix)
+        if: steps.tag_check.outputs.skip != 'true'
         id: version
         run: |
           set -euo pipefail
@@ -95,17 +121,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Computed dev: $TAG (base v${NEXT} = prior stable v${BASE:-0.0.0} + 1 patch)"
 
-      - name: Skip if this commit already has a dev tag
-        run: |
-          if git tag --points-at HEAD | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.'; then
-            echo "::warning::HEAD already has a dev tag; skipping to avoid duplicate."
-            exit 78  # neutral skip-style exit (older runners) — modern runners treat non-zero as fail; keep this informational only
-          fi
-
       - name: Run tests
+        if: steps.tag_check.outputs.skip != 'true'
         run: go test -race ./...
 
       - name: Build linux/arm64
+        if: steps.tag_check.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
@@ -125,6 +146,7 @@ jobs:
       # WDOS_DEV_MINISIGN_PASSWORD), produce $ASSET.minisig, add it below.
 
       - name: Create + push tag
+        if: steps.tag_check.outputs.skip != 'true'
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -133,6 +155,7 @@ jobs:
           git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Publish GitHub Release (prerelease)
+        if: steps.tag_check.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}

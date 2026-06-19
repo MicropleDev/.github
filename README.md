@@ -18,12 +18,12 @@ GitHub treats a repo named `.github` specially: its `profile/README.md` is the p
 
 | Workflow | Used by | Stable / dev |
 |---|---|---|
-| `workflows/go-release.yml` | heisenberg, weather-server, sounddog, AlphaDog | stable cuts (manual) |
-| `workflows/go-dev-release.yml` | same | dev cuts (auto on push to main) |
-| (future) `workflows/python-tarball-release.yml` / `*-dev.yml` | superdog, superdog-listener | both |
-| (future) `workflows/flutter-ui-release.yml` / `*-dev.yml` | watchdog, setup-dog | both |
+| `.github/workflows/go-release.yml` | heisenberg, weather-server, sounddog, AlphaDog | stable cuts (manual) |
+| `.github/workflows/go-dev-release.yml` | same | dev cuts (auto on push to main) |
+| (future) `.github/workflows/python-tarball-release.yml` / `*-dev.yml` | superdog, superdog-listener | both |
+| (future) `.github/workflows/flutter-ui-release.yml` / `*-dev.yml` | watchdog, setup-dog | both |
 
-Conventions (tag scheme, signing model, cadence) live in [docs/release-scheme.md](docs/release-scheme.md) once written.
+Conventions (tag scheme, signing model, cadence) live in [docs/release-scheme.md](docs/release-scheme.md).
 
 ## Why this repo exists
 
