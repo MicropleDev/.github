@@ -52,6 +52,16 @@ on:
         description: "Semver bump applied to the latest v{x.y.z} tag."
         required: true
         type: string  # patch | minor | major
+      environment:
+        description: >-
+          Optional GH Actions environment to scope this run to. Set to
+          'stable-release' (or whatever name the consumer repo uses) when
+          WDOS_STABLE_MINISIGN_KEY/PASSWORD are stored as environment
+          secrets behind required-reviewer approval. Default empty = no
+          environment. See docs/SIGNING.md.
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: "Computed version without the 'v' prefix (e.g. '0.1.0')."
@@ -73,6 +83,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    # Optional environment gating. When the caller passes
+    # `environment: stable-release` (and configures it with required
+    # reviewer approval), the stable signing secrets remain unreachable
+    # until a human clicks Approve.
+    environment: ${{ inputs.environment }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -164,7 +179,11 @@ jobs:
       # here (see docs/SIGNING.md). Without them this step fails fast with
       # a clear error.
       - name: Sign artifact (stable key)
-        uses: MicropleDev/.github/.github/actions/minisign-sign@main
+        # Pin the internal action to the same commit as the workflow itself.
+        # github.workflow_sha is the SHA of *this* file, so callers pinning
+        # the workflow to a tag/SHA get the action at the same commit — no
+        # drift between the workflow they pinned and the action it invokes.
+        uses: MicropleDev/.github/.github/actions/minisign-sign@${{ github.workflow_sha }}
         with:
           asset_path: dist/${{ env.asset }}
           key: ${{ secrets.WDOS_STABLE_MINISIGN_KEY }}

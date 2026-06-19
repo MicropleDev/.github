@@ -1,50 +1,56 @@
 # Release signing
 
-WatchDog OS release artifacts are signed with [minisign](https://jedisct1.github.io/minisign/) (Ed25519). Public keys are committed to [`MicropleDev/watchdog-os/manifest/keys/`](https://github.com/MicropleDev/watchdog-os/tree/main/manifest/keys); secret keys live as described below.
+WatchDog OS release artifacts are signed with [minisign](https://jedisct1.github.io/minisign/) (Ed25519). Public keys are committed to [`MicropleDev/watchdog-os/manifest/keys/`](https://github.com/MicropleDev/watchdog-os/tree/main/manifest/keys); secret keys live in the storage locations described below.
 
 ## Two-key model
 
-| Channel | Public key | Secret-key storage | Used for |
+| Channel | Public key | Used by | Secret-key handling |
 |---|---|---|---|
-| `stable` | `manifest/keys/wdos-stable.pub` (id `01FB8B9873285A05`) | Offline (1Password) + GH Actions secret `WDOS_STABLE_MINISIGN_KEY` (org-level, environment-protected) | Manual stable cuts via `go-release.yml` |
-| `dev` | `manifest/keys/wdos-dev.pub` (id `0A08F649ED6E0F74`) | GH Actions secret `WDOS_DEV_MINISIGN_KEY` (org-level) | Auto dev cuts on push to main via `go-dev-release.yml` |
+| `stable` | `manifest/keys/wdos-stable.pub` (id `01FB8B9873285A05`) | Manual stable cuts via `go-release.yml` | Source of truth: offline (1Password). Staged into a **GH Actions environment secret** on each consumer repo, under an environment with required-reviewer approval. |
+| `dev` | `manifest/keys/wdos-dev.pub` (id `0A08F649ED6E0F74`) | Auto dev cuts on push to main via `go-dev-release.yml` | **Org-level GH Actions secret** — visible to every org repo, no gating. |
 
 The Pi-side OTA agent (`wd-updater`, Phase 2 of the OTA epic) accepts **only** the signature whose key matches the Pi's configured channel. A compromised dev key cannot ship a fake stable.
 
-## One-time setup of GH Actions secrets
+## Secret storage details
 
-Both signing flows pull their key + password from these org-level secrets:
+The two channels deliberately use different storage scopes — different threat models for each.
 
-| Secret name | Value | Required for |
-|---|---|---|
-| `WDOS_DEV_MINISIGN_KEY` | full text of `wdos-dev.key` (run `cat wdos-dev.key`) | dev releases |
-| `WDOS_DEV_MINISIGN_PASSWORD` | password chosen at key-gen time | dev releases |
-| `WDOS_STABLE_MINISIGN_KEY` | full text of `wdos-stable.key` (from 1Password attachment) | stable releases |
-| `WDOS_STABLE_MINISIGN_PASSWORD` | password chosen at key-gen time | stable releases |
+### Dev secrets — org-level (no gating)
 
-### Recommended: gate stable behind a GH environment
+Add at **Org Settings → Secrets and variables → Actions** on the `MicropleDev` org:
 
-Add a GH Actions **environment** called `stable-release` and put the two `WDOS_STABLE_*` secrets there (instead of at the repo/org level directly). Configure the environment to require manual reviewer approval. Then in any consumer repo, the stable workflow won't even be able to read the secret without explicit human approval — restoring most of the offline-key safety property.
+| Name | Value |
+|---|---|
+| `WDOS_DEV_MINISIGN_KEY` | full text of `wdos-dev.key` (run `cat wdos-dev.key`) |
+| `WDOS_DEV_MINISIGN_PASSWORD` | password chosen at key-gen time |
 
-Consumer wrapper for stable becomes:
+Visibility: "All repositories" (or restrict to the Go service repos). Dev cuts fire on every push to main — gating them would defeat the auto-cadence.
+
+### Stable secrets — per-repo environment, required-reviewer approval
+
+Stable cuts are deliberate and infrequent; the secrets should require a human click before they're accessible.
+
+In **each consumer repo** (heisenberg, weather-server, sounddog, AlphaDog — the four Go services), under **Settings → Environments → New environment**:
+
+1. Name the environment `stable-release` (the consumer's wrapper passes this as the `environment` input — see below).
+2. Configure **Required reviewers** = `mavis-dev` (or whoever should approve stable cuts).
+3. Add the two secrets inside that environment:
+
+| Name | Value |
+|---|---|
+| `WDOS_STABLE_MINISIGN_KEY` | full text of `wdos-stable.key` (from 1Password attachment) |
+| `WDOS_STABLE_MINISIGN_PASSWORD` | password chosen at key-gen time |
+
+The secrets are now unreachable to any workflow run until the configured reviewer clicks "Approve and deploy" on the pending run. The reusable `go-release.yml` workflow accepts `environment` as an input — when the caller passes `environment: stable-release`, GH applies that environment to the signing job, and the gating fires.
+
+If you don't want the gating yet (small fleet, low-paranoia phase), skip the environment step entirely and put `WDOS_STABLE_MINISIGN_*` at the org level alongside the dev secrets. The `go-release.yml` workflow's `environment` input defaults to empty in that case.
+
+## Consumer wrapper templates
+
+### Dev (auto on push to main, no env gating)
 
 ```yaml
-jobs:
-  release:
-    uses: MicropleDev/.github/.github/workflows/go-release.yml@main
-    with: { binary_name: heisenberg, version_pkg: heisenberg/pkg/version, build_path: ., bump_type: ${{ inputs.bump_type }} }
-    secrets: inherit
-    # environment: stable-release  # uncomment if W8 is updated to take environment as input
-```
-
-(The composite action and reusable workflow as currently authored leave environment selection to the caller; we'd add it as a workflow input if/when the protection actually fires.)
-
-## Consumer usage — `secrets: inherit`
-
-Caller workflows must opt in to passing secrets through to reusable workflows. The standard form:
-
-```yaml
-# .github/workflows/dev-release.yml in a consumer repo (heisenberg, etc.)
+# .github/workflows/dev-release.yml in a Go consumer repo
 name: Dev release
 on:
   push:
@@ -60,7 +66,31 @@ jobs:
     secrets: inherit  # passes WDOS_DEV_MINISIGN_KEY/PASSWORD through
 ```
 
-If `secrets: inherit` is omitted, the sign step fails fast with a clear error pointing at the missing secret.
+### Stable (manual, env-protected)
+
+```yaml
+# .github/workflows/release.yml in a Go consumer repo
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        type: choice
+        options: [patch, minor, major]
+        required: true
+jobs:
+  release:
+    uses: MicropleDev/.github/.github/workflows/go-release.yml@main
+    with:
+      binary_name: heisenberg
+      version_pkg: heisenberg/pkg/version
+      build_path: .
+      bump_type: ${{ inputs.bump_type }}
+      environment: stable-release   # gates secret access on required-reviewer approval
+    secrets: inherit                # passes WDOS_STABLE_MINISIGN_KEY/PASSWORD through
+```
+
+If `secrets: inherit` is omitted, the sign step fails fast with a clear error pointing at the missing secret. If `environment:` is omitted from the consumer wrapper, the workflow still runs — just without env gating (secrets resolved from repo/org scope directly).
 
 ## Verifying a signed release
 
