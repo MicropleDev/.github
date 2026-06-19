@@ -12,7 +12,7 @@
 #   on:
 #     push:
 #       branches: [main]
-#       paths-ignore: ['**/*.md', 'docs/**', '.gitignore']
+#       paths-ignore: ['**/*.md', '.github/**', 'docs/**', '.gitignore']
 #   jobs:
 #     dev-release:
 #       uses: MicropleDev/.github/.github/workflows/python-tarball-dev-release.yml@<sha>
@@ -39,7 +39,15 @@ on:
         required: true
         type: string
       runner:
-        description: "Runner image. Default ubuntu-24.04-arm for arm64 venv compatibility."
+        description: >-
+          Runner image. Default 'ubuntu-24.04-arm' is GitHub's hosted
+          Linux ARM64 runner (Ampere; rolled out 2024-25) — chosen
+          because the Python services ship a venv with native deps that
+          must match the Pi's arm64 architecture. Requires the org to
+          have access to ARM runners; if your org doesn't, pass
+          'ubuntu-24.04' instead (x86_64 venv, won't run on the Pi but
+          will at least let CI complete for non-deploy testing). Other
+          valid labels: any self-hosted runner the consumer org defines.
         required: false
         type: string
         default: "ubuntu-24.04-arm"
