@@ -10,7 +10,7 @@
 #   on:
 #     push:
 #       branches: [main]
-#       paths-ignore: ['**.md', 'docs/**', '.gitignore']
+#       paths-ignore: ['**/*.md', 'docs/**', '.gitignore']
 #   jobs:
 #     dev-release:
 #       uses: MicropleDev/.github/.github/workflows/python-tarball-dev-release.yml@<sha>

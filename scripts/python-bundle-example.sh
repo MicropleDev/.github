@@ -46,8 +46,18 @@ mkdir -p "$BUNDLE_DIR"
 # Option A: enumerate tracked top-level *.py files (preferred — avoids
 # silently dropping newly-added modules; matches the cure adopted by
 # superdog-listener#21).
-PY_FILES="$(git ls-files '*.py' | grep -v /)"
-cp -a $PY_FILES VERSION BUILD requirements.txt "$BUNDLE_DIR/"
+#
+# Using mapfile + an array is deliberate:
+# - 'set -e' would kill the script on `grep -v /` returning non-zero
+#   when there are no matches (e.g. brand-new repo); `|| true` cures that.
+# - 'cp -a $UNQUOTED' would word-split on whitespace, breaking on
+#   filenames with spaces or newlines. Array expansion is safe.
+mapfile -t PY_FILES < <(git ls-files '*.py' | grep -v / || true)
+if [ "${#PY_FILES[@]}" -gt 0 ]; then
+  cp -a "${PY_FILES[@]}" VERSION BUILD requirements.txt "$BUNDLE_DIR/"
+else
+  cp -a VERSION BUILD requirements.txt "$BUNDLE_DIR/"
+fi
 
 # Option B: hardcode specific files (use only when you have config / data
 # files that aren't *.py).
