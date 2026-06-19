@@ -1,0 +1,113 @@
+# Composite action: sign a file with minisign, producing a sibling .minisig.
+#
+# Inputs are passed as workflow secrets — the action expects the contents of
+# the secret key file (NOT a path) and the password protecting it. Caller
+# pattern (most common — see docs/SIGNING.md):
+#
+#   - uses: MicropleDev/.github/.github/actions/minisign-sign@main
+#     with:
+#       asset_path: dist/heisenberg-0.1.0-linux-arm64
+#       key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
+#       password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
+#
+# Produces dist/heisenberg-0.1.0-linux-arm64.minisig.
+#
+# Tracks: MicropleDev/watchdog-os#60 (W7) and #61 (W8).
+
+name: Minisign sign artifact
+description: Sign a file with minisign, producing a sibling .minisig sidecar.
+
+inputs:
+  asset_path:
+    description: Path to the file to sign. Signature lands at ${asset_path}.minisig.
+    required: true
+  key:
+    description: Contents of the minisign secret key file (NOT a path). Pass via secrets.
+    required: true
+  password:
+    description: Password protecting the secret key. Pass via secrets.
+    required: true
+  trusted_comment:
+    description: Optional trusted comment baked into the signature. Defaults to "<basename> signed at <ISO8601>".
+    required: false
+    default: ""
+
+outputs:
+  signature_path:
+    description: Absolute path to the produced .minisig file.
+    value: ${{ steps.sign.outputs.signature_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        MINISIGN_KEY: ${{ inputs.key }}
+        MINISIGN_PASSWORD: ${{ inputs.password }}
+        ASSET_PATH: ${{ inputs.asset_path }}
+      run: |
+        set -euo pipefail
+        if [ -z "$MINISIGN_KEY" ]; then
+          echo "::error::input 'key' is empty — make sure the WDOS_{STABLE,DEV}_MINISIGN_KEY secret is set on the caller and that the caller passes 'secrets: inherit' (or names the secret explicitly)."
+          exit 1
+        fi
+        if [ -z "$MINISIGN_PASSWORD" ]; then
+          echo "::error::input 'password' is empty — make sure the matching _PASSWORD secret is set."
+          exit 1
+        fi
+        if [ ! -f "$ASSET_PATH" ]; then
+          echo "::error::asset_path '$ASSET_PATH' is not a file. Did the build step fail or produce a different name?"
+          exit 1
+        fi
+
+    - name: Install minisign
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v minisign >/dev/null 2>&1; then
+          echo "minisign already installed: $(minisign -v 2>&1 | head -n1)"
+          exit 0
+        fi
+        sudo apt-get update -qq
+        sudo apt-get install -qq -y minisign
+        minisign -v 2>&1 | head -n1
+
+    - name: Sign
+      id: sign
+      shell: bash
+      env:
+        MINISIGN_KEY: ${{ inputs.key }}
+        MINISIGN_PASSWORD: ${{ inputs.password }}
+        ASSET_PATH: ${{ inputs.asset_path }}
+        TRUSTED_COMMENT: ${{ inputs.trusted_comment }}
+      run: |
+        set -euo pipefail
+
+        # Write key to a 0600 temp file. Use mktemp so the path is fresh per
+        # run; trap deletes it on exit/failure. shred preferred if available
+        # to make filesystem recovery harder, falls back to rm.
+        KEY_FILE=$(mktemp)
+        cleanup() { command -v shred >/dev/null 2>&1 && shred -u "$KEY_FILE" 2>/dev/null || rm -f "$KEY_FILE"; }
+        trap cleanup EXIT
+        printf '%s' "$MINISIGN_KEY" > "$KEY_FILE"
+        chmod 600 "$KEY_FILE"
+
+        # Default trusted comment if caller didn't supply one. Trusted
+        # comment is part of the signed payload — gets cryptographically
+        # bound to the file.
+        if [ -z "$TRUSTED_COMMENT" ]; then
+          TRUSTED_COMMENT="$(basename "$ASSET_PATH") signed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        fi
+
+        # minisign reads the password from stdin when stdin is not a TTY.
+        # Pipe the password and use -t for the trusted comment.
+        printf '%s\n' "$MINISIGN_PASSWORD" | minisign -Sm "$ASSET_PATH" -s "$KEY_FILE" -t "$TRUSTED_COMMENT"
+
+        SIG_PATH="${ASSET_PATH}.minisig"
+        if [ ! -f "$SIG_PATH" ]; then
+          echo "::error::Expected signature at $SIG_PATH not found after minisign -S"
+          exit 1
+        fi
+        echo "signature_path=$SIG_PATH" >> "$GITHUB_OUTPUT"
+        echo "::notice::Signed: $SIG_PATH ($(stat -c%s "$SIG_PATH") bytes)"
