@@ -66,8 +66,12 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
+      # Callers can rely on `version`/`tag` being populated in both the
+      # "newly cut" path (steps.version) and the "already tagged, skipped"
+      # path (steps.tag_check). The `||` fallback fires when steps.version
+      # was skipped.
+      version: ${{ steps.version.outputs.version || steps.tag_check.outputs.existing_version }}
+      tag: ${{ steps.version.outputs.tag || steps.tag_check.outputs.existing_tag }}
       skip: ${{ steps.tag_check.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
@@ -76,16 +80,23 @@ jobs:
 
       # Idempotency guard: if HEAD already carries a dev tag (e.g. workflow
       # re-run after a successful release, or a previous attempt that pushed
-      # the tag but failed downstream), set skip=true and gate every
-      # subsequent step on it. The workflow still ends with a green check —
-      # there's just nothing new to do.
+      # the tag but failed downstream), set skip=true AND emit the existing
+      # tag/version so the job's outputs stay populated for downstream
+      # consumers. Every subsequent step is gated on skip!=true. The
+      # workflow still ends with a green check — there's just nothing new
+      # to do.
       - name: Check for existing dev tag on HEAD
         id: tag_check
         run: |
           set -euo pipefail
-          if git tag --points-at HEAD | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::HEAD already has a dev tag; skipping build/tag/release."
+          EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.' | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            {
+              echo "skip=true"
+              echo "existing_tag=$EXISTING"
+              echo "existing_version=${EXISTING#v}"
+            } >> "$GITHUB_OUTPUT"
+            echo "::notice::HEAD already has dev tag $EXISTING; skipping build/tag/release."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -139,7 +150,7 @@ jobs:
             -X '${{ inputs.version_pkg }}.Version=${VERSION}' \
             -X '${{ inputs.version_pkg }}.GitCommit=${GIT_COMMIT}' \
             -X '${{ inputs.version_pkg }}.BuildDate=${BUILD_DATE}'"
-          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/$ASSET" ${{ inputs.build_path }}
+          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/$ASSET" "${{ inputs.build_path }}"
           (cd dist && sha256sum "$ASSET" > "${ASSET}.sha256")
 
       # TODO(W8): sign $ASSET with the dev minisign key (WDOS_DEV_MINISIGN_KEY /
