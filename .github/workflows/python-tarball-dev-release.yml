@@ -1,0 +1,196 @@
+# Reusable workflow for cutting a DEV (prerelease) Python tarball.
+#
+# Intended for superdog and superdog-listener via their consumer-repo
+# `push to main` trigger; consumer migration is tracked as W4
+# (MicropleDev/watchdog-os#57) and has not yet landed. Per-repo wrapper
+# example:
+#
+#   # .github/workflows/dev-release.yml in a consumer repo
+#   name: Dev Release
+#   permissions:
+#     contents: write
+#   on:
+#     push:
+#       branches: [main]
+#       paths-ignore: ['**/*.md', '.github/**', 'docs/**', '.gitignore']
+#   jobs:
+#     dev-release:
+#       uses: MicropleDev/.github/.github/workflows/python-tarball-dev-release.yml@<sha>
+#       with:
+#         package_name: superdog
+#         python_version: "3.13"
+#       secrets: inherit
+#
+# Per-repo packaging: same contract as python-tarball-release.yml — caller
+# provides scripts/build-bundle.sh that produces $ASSET_PATH + $ASSET_PATH.sha256
+# from the env vars PACKAGE_NAME, VERSION, BUNDLE_DIR, ASSET_PATH.
+
+name: Python tarball release (dev)
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: "Package name."
+        required: true
+        type: string
+      python_version:
+        description: "Python version (e.g. '3.13')."
+        required: true
+        type: string
+      runner:
+        description: >-
+          Runner image. Default 'ubuntu-24.04-arm' is GitHub's hosted
+          Linux ARM64 runner (Ampere; rolled out 2024-25) — chosen
+          because the Python services ship a venv with native deps that
+          must match the Pi's arm64 architecture. Requires the org to
+          have access to ARM runners; if your org doesn't, pass
+          'ubuntu-24.04' instead (x86_64 venv, won't run on the Pi but
+          will at least let CI complete for non-deploy testing). Other
+          valid labels: any self-hosted runner the consumer org defines.
+        required: false
+        type: string
+        default: "ubuntu-24.04-arm"
+    outputs:
+      version:
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        value: ${{ jobs.release.outputs.tag }}
+      tag_existed:
+        value: ${{ jobs.release.outputs.tag_existed }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: python-tarball-dev-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      tag_existed: ${{ steps.version.outputs.tag_existed }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      # Single source of truth for the version. Two paths:
+      # - If HEAD already has a dev tag (rerun after partial failure):
+      #   REUSE that tag. Re-publish step will (re)upload assets.
+      # - Otherwise: derive a new dev tag from the latest stable + suffix.
+      - name: Resolve version (reuse existing dev tag if present, else compute new)
+        id: version
+        run: |
+          set -euo pipefail
+          EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.' | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            TAG="$EXISTING"
+            VERSION="${TAG#v}"
+            TAG_EXISTED=true
+            echo "::notice::Reusing existing dev tag $TAG (rerun / recovery path)."
+          else
+            LATEST=$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+            BASE=${LATEST#v}
+            BASE=${BASE:-0.0.0}
+            IFS='.' read -r MAJ MIN PAT <<<"$BASE"
+            PAT=$((PAT+1))
+            NEXT="${MAJ}.${MIN}.${PAT}"
+            STAMP=$(date -u +%Y%m%d)
+            SHORT=$(git rev-parse --short HEAD)
+            VERSION="${NEXT}-dev.${STAMP}.${SHORT}"
+            TAG="v${VERSION}"
+            TAG_EXISTED=false
+            echo "Computed new dev: $TAG (base v${NEXT} = prior stable v${BASE:-0.0.0} + 1 patch)"
+          fi
+          GIT_COMMIT=$(git rev-parse HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "git_commit=$GIT_COMMIT"
+            echo "build_date=$BUILD_DATE"
+            echo "tag_existed=$TAG_EXISTED"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write VERSION + BUILD files for the bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          echo "$VERSION" > VERSION
+          printf '{"git_commit": "%s", "build_date": "%s"}\n' "${GIT_COMMIT:0:7}" "$BUILD_DATE" > BUILD
+
+      - name: Verify per-repo build-bundle.sh exists
+        run: |
+          set -euo pipefail
+          if [ ! -x scripts/build-bundle.sh ]; then
+            echo "::error::Expected an executable scripts/build-bundle.sh in this repo. The reusable Python release workflow delegates per-repo packaging there. See MicropleDev/.github docs/release-scheme.md for the contract."
+            exit 1
+          fi
+
+      - name: Build bundle (per-repo)
+        env:
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUNDLE_DIR: dist/${{ inputs.package_name }}-${{ steps.version.outputs.version }}
+          ASSET_PATH: dist/${{ inputs.package_name }}-${{ steps.version.outputs.version }}.tar.zst
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          scripts/build-bundle.sh
+          if [ ! -f "$ASSET_PATH" ]; then
+            echo "::error::scripts/build-bundle.sh did not produce $ASSET_PATH"
+            exit 1
+          fi
+          if [ ! -f "${ASSET_PATH}.sha256" ]; then
+            echo "::error::scripts/build-bundle.sh did not produce ${ASSET_PATH}.sha256"
+            exit 1
+          fi
+          echo "asset=$(basename "$ASSET_PATH")" >> "$GITHUB_ENV"
+
+      - name: Sign artifact (dev key)
+        # Same-repo internal action. The `uses:` keyword doesn't allow
+        # github-context expressions when this workflow is invoked as a
+        # `workflow_call` reusable workflow (GH resolves uses: at parse
+        # time before contexts are available — would emit "Unrecognized
+        # named-value: 'github'"). So we use @main here and accept that
+        # callers pinning the workflow to a tag/SHA still get the action
+        # at current main. When MicropleDev/.github starts cutting tagged
+        # releases, switch this to the same tag the workflow lives at.
+        uses: MicropleDev/.github/.github/actions/minisign-sign@main
+        with:
+          asset_path: dist/${{ env.asset }}
+          key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
+          password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
+          trusted_comment: "${{ inputs.package_name }} ${{ steps.version.outputs.tag }} (dev)"
+
+      - name: Create + push tag (only when newly computed)
+        if: steps.version.outputs.tag_existed != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.package_name }} ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub Release (prerelease, idempotent)
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "${{ inputs.package_name }} ${{ steps.version.outputs.tag }}"
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ env.asset }}
+            dist/${{ env.asset }}.sha256
+            dist/${{ env.asset }}.minisig

@@ -36,10 +36,35 @@ Stable cadence is naturally slow (weeks/months); automating it adds risk without
 
 | Type | Stable example | Dev example |
 |---|---|---|
-| Go binary | `heisenberg-0.1.0-linux-arm64` + `.sha256` (+ `.minisig` post-W8) | `heisenberg-0.1.1-dev.20260618.abc1234-linux-arm64` + sidecars |
-| Python tarball (W3) | `superdog-0.2.0.tar.zst` + `.sha256` (+ `.minisig`) | same with dev version |
-| Flutter UI tarball (W5) | `watchdog-ui-0.1.0.tar.zst` + `.sha256` (+ `.minisig`) | same |
+| Go binary | `heisenberg-0.1.0-linux-arm64` + `.sha256` + `.minisig` | `heisenberg-0.1.1-dev.20260618.abc1234-linux-arm64` + sidecars |
+| Python tarball | `superdog-0.2.0.tar.zst` + `.sha256` + `.minisig` | same with dev version |
+| Flutter UI tarball (W5) | `watchdog-ui-0.1.0.tar.zst` + `.sha256` + `.minisig` | same |
 | watchdog-os bundle | `watchdog-bundle-0.1.0.tar.zst` + `.sha256` + `.minisig` + `manifest.json` | same |
+
+## Python `scripts/build-bundle.sh` contract
+
+Python packaging is more bespoke per repo than Go (apt extras, model
+pre-downloads, distinct source-file sets). The reusable Python workflows
+delegate to a per-repo `scripts/build-bundle.sh` script that the consumer
+repo provides. The reusable workflow invokes it with these env vars set:
+
+| Env var | Value | Example |
+|---|---|---|
+| `PACKAGE_NAME` | the `package_name` input | `superdog` |
+| `VERSION` | resolved version (no `v` prefix) | `0.2.0` or `0.2.1-dev.20260619.abc1234` |
+| `BUNDLE_DIR` | staging dir the script should populate | `dist/superdog-0.2.0` |
+| `ASSET_PATH` | output tarball the script must produce | `dist/superdog-0.2.0.tar.zst` |
+
+The script is responsible for:
+1. Installing any apt build deps it needs.
+2. Creating the venv and `pip install -r requirements.txt` (and any extras).
+3. Optionally pre-downloading models / assets (e.g. Piper voice, openwakeword).
+4. Copying source files into `$BUNDLE_DIR`.
+5. Producing `$ASSET_PATH` (tar.zst) and `$ASSET_PATH.sha256`.
+
+The reusable workflow then signs the asset with minisign and publishes it. The script must be executable (`chmod +x scripts/build-bundle.sh`).
+
+A canonical example lives in [`scripts/python-bundle-example.sh`](../scripts/python-bundle-example.sh) of this repo.
 
 ## Bundle channel selection (watchdog-os)
 
