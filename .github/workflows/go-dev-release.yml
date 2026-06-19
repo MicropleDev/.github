@@ -154,11 +154,15 @@ jobs:
       # here (see docs/SIGNING.md). Without them this step fails fast with
       # a clear error.
       - name: Sign artifact (dev key)
-        # Pin the internal action to the same commit as the workflow itself.
-        # github.workflow_sha is the SHA of *this* file, so callers pinning
-        # the workflow to a tag/SHA get the action at the same commit — no
-        # drift between the workflow they pinned and the action it invokes.
-        uses: MicropleDev/.github/.github/actions/minisign-sign@${{ github.workflow_sha }}
+        # Same-repo internal action. The `uses:` keyword doesn't allow
+        # github-context expressions when this workflow is invoked as a
+        # `workflow_call` reusable workflow (GH resolves uses: at parse
+        # time before contexts are available — would emit "Unrecognized
+        # named-value: 'github'"). So we use @main here and accept that
+        # callers pinning the workflow to a tag/SHA still get the action
+        # at current main. When MicropleDev/.github starts cutting tagged
+        # releases, switch this to the same tag the workflow lives at.
+        uses: MicropleDev/.github/.github/actions/minisign-sign@main
         with:
           asset_path: dist/${{ env.asset }}
           key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
