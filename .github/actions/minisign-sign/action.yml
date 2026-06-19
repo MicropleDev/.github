@@ -122,8 +122,43 @@ runs:
         KEY_FILE=$(mktemp)
         cleanup() { command -v shred >/dev/null 2>&1 && shred -u "$KEY_FILE" 2>/dev/null || rm -f "$KEY_FILE"; }
         trap cleanup EXIT
-        printf '%s' "$MINISIGN_KEY" > "$KEY_FILE"
+
+        # Defensively ensure a trailing newline. Some pasteboards strip
+        # the final LF when copying out of editors — minisign tolerates
+        # missing trailing newlines but the diagnostic below is cleaner
+        # when it's present.
+        printf '%s\n' "$MINISIGN_KEY" > "$KEY_FILE"
         chmod 600 "$KEY_FILE"
+
+        # Diagnostic: validate the file shape BEFORE handing it to
+        # minisign, so we get an actionable error if the secret was
+        # pasted wrong (most common: literal '\n' instead of newlines —
+        # turns the 2-line key file into 1 line and minisign emits an
+        # opaque "Error while loading the secret key file").
+        #
+        # We only print the first line (which is the canonical, fixed
+        # public string "untrusted comment: minisign encrypted secret
+        # key" — NOT the base64 secret). The line count is enough to
+        # diagnose the escaped-newline trap.
+        LINE_COUNT=$(wc -l < "$KEY_FILE")
+        FIRST_LINE=$(head -n 1 "$KEY_FILE")
+        echo "Key file shape: $LINE_COUNT line(s)"
+        echo "First line: $FIRST_LINE"
+        case "$FIRST_LINE" in
+          "untrusted comment: minisign"*) ;;
+          *)
+            echo "::error::Secret value doesn't look like a minisign key file."
+            echo "::error::Expected first line to start with 'untrusted comment: minisign...'."
+            echo "::error::Got: '$FIRST_LINE'"
+            echo "::error::Most common cause: pasted with escaped \\n instead of actual newlines (entire file collapsed to 1 line). Re-copy the key file as-is (preserving line breaks) and update the secret value."
+            exit 1
+            ;;
+        esac
+        if [ "$LINE_COUNT" -lt 2 ]; then
+          echo "::error::Key file collapsed to $LINE_COUNT line(s). A minisign secret key has 2 lines (comment + base64 key)."
+          echo "::error::Most likely the secret was pasted with literal '\\n' substrings. Re-paste preserving actual line breaks."
+          exit 1
+        fi
 
         # Default trusted comment if caller didn't supply one. Trusted
         # comment is part of the signed payload — gets cryptographically
