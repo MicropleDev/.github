@@ -27,11 +27,15 @@ sudo apt-get install -y zstd
 #   sudo apt-get install -y zstd libportaudio2 portaudio19-dev mpv
 
 # === 2. Venv + pip install ===
+# Invoke pip via `python -m pip` rather than the bin/pip entrypoint:
+# more robust against environments where the entrypoint script is
+# missing, wraps a stale shebang, or points at the wrong interpreter.
+# Keeps installs tied to the venv we just created.
 python -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
 # Example extras (superdog-listener):
-#   .venv/bin/pip install openwakeword --no-deps
+#   .venv/bin/python -m pip install openwakeword --no-deps
 #   .venv/bin/python -c "import openwakeword; openwakeword.utils.download_models()"
 
 # === 3. Optional pre-download (edit per repo) ===

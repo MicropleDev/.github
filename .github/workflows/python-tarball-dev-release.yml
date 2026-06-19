@@ -151,6 +151,14 @@ jobs:
           echo "asset=$(basename "$ASSET_PATH")" >> "$GITHUB_ENV"
 
       - name: Sign artifact (dev key)
+        # Same-repo internal action. The `uses:` keyword doesn't allow
+        # github-context expressions when this workflow is invoked as a
+        # `workflow_call` reusable workflow (GH resolves uses: at parse
+        # time before contexts are available — would emit "Unrecognized
+        # named-value: 'github'"). So we use @main here and accept that
+        # callers pinning the workflow to a tag/SHA still get the action
+        # at current main. When MicropleDev/.github starts cutting tagged
+        # releases, switch this to the same tag the workflow lives at.
         uses: MicropleDev/.github/.github/actions/minisign-sign@main
         with:
           asset_path: dist/${{ env.asset }}
