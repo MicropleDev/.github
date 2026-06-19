@@ -1,0 +1,149 @@
+# Composite action: sign a file with minisign, producing a sibling .minisig.
+#
+# Inputs are passed as workflow secrets — the action expects the contents of
+# the secret key file (NOT a path) and the password protecting it. Caller
+# pattern (most common — see docs/SIGNING.md):
+#
+#   - uses: MicropleDev/.github/.github/actions/minisign-sign@main
+#     with:
+#       asset_path: dist/heisenberg-0.1.0-linux-arm64
+#       key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
+#       password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
+#
+# Produces dist/heisenberg-0.1.0-linux-arm64.minisig.
+#
+# Tracks: MicropleDev/watchdog-os#60 (W7) and #61 (W8).
+
+name: Minisign sign artifact
+description: >-
+  Sign a file with minisign, producing a sibling .minisig sidecar.
+  Requires a Debian/Ubuntu runner (uses apt-get to install minisign, plus
+  GNU coreutils — readlink -f, stat -c). Use runs-on: ubuntu-* on the
+  invoking job.
+
+inputs:
+  asset_path:
+    description: Path to the file to sign. Signature lands at ${asset_path}.minisig.
+    required: true
+  key:
+    description: Contents of the minisign secret key file (NOT a path). Pass via secrets.
+    required: true
+  password:
+    description: Password protecting the secret key. Pass via secrets.
+    required: true
+  trusted_comment:
+    description: Optional trusted comment baked into the signature. Defaults to "<basename> signed at <ISO8601>".
+    required: false
+    default: ""
+
+outputs:
+  signature_path:
+    description: Absolute path to the produced .minisig file.
+    value: ${{ steps.sign.outputs.signature_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Verify runner is Debian/Ubuntu
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The install step uses apt-get; the sign step uses GNU readlink -f
+        # and stat -c. Fail fast with a clear message instead of cryptic
+        # "command not found" or unexpected stat output on macOS/RHEL/etc.
+        if [ "${RUNNER_OS:-}" != "Linux" ]; then
+          echo "::error::minisign-sign requires a Linux runner. Got RUNNER_OS='${RUNNER_OS:-unset}'. Use 'runs-on: ubuntu-latest' (or another ubuntu-* image)."
+          exit 1
+        fi
+        if ! command -v apt-get >/dev/null 2>&1; then
+          echo "::error::minisign-sign requires apt-get (Debian/Ubuntu). Not found on this runner. Use 'runs-on: ubuntu-*' or a Debian/Ubuntu container."
+          exit 1
+        fi
+        # sudo is only needed when we're not already running as root.
+        # Container images often run as root without sudo installed — fine.
+        if [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
+          echo "::error::minisign-sign needs to install minisign via apt-get. When not running as root, sudo is required. Either run the job as root (most container images do) or use a runner with sudo (standard GitHub-hosted ubuntu-* runners)."
+          exit 1
+        fi
+
+    - name: Validate inputs
+      shell: bash
+      env:
+        MINISIGN_KEY: ${{ inputs.key }}
+        MINISIGN_PASSWORD: ${{ inputs.password }}
+        ASSET_PATH: ${{ inputs.asset_path }}
+      run: |
+        set -euo pipefail
+        if [ -z "$MINISIGN_KEY" ]; then
+          echo "::error::input 'key' is empty — make sure the WDOS_{STABLE,DEV}_MINISIGN_KEY secret is set on the caller and that the caller passes 'secrets: inherit' (or names the secret explicitly)."
+          exit 1
+        fi
+        if [ -z "$MINISIGN_PASSWORD" ]; then
+          echo "::error::input 'password' is empty — make sure the matching _PASSWORD secret is set."
+          exit 1
+        fi
+        if [ ! -f "$ASSET_PATH" ]; then
+          echo "::error::asset_path '$ASSET_PATH' is not a file. Did the build step fail or produce a different name?"
+          exit 1
+        fi
+
+    - name: Install minisign
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v minisign >/dev/null 2>&1; then
+          echo "minisign already installed: $(minisign -v 2>&1 | head -n1)"
+          exit 0
+        fi
+        # Use sudo only when not already root (skips on root containers
+        # that lack sudo).
+        SUDO=""
+        if [ "$(id -u)" -ne 0 ]; then
+          SUDO="sudo"
+        fi
+        $SUDO apt-get update -qq
+        $SUDO apt-get install -qq -y minisign
+        minisign -v 2>&1 | head -n1
+
+    - name: Sign
+      id: sign
+      shell: bash
+      env:
+        MINISIGN_KEY: ${{ inputs.key }}
+        MINISIGN_PASSWORD: ${{ inputs.password }}
+        ASSET_PATH: ${{ inputs.asset_path }}
+        TRUSTED_COMMENT: ${{ inputs.trusted_comment }}
+      run: |
+        set -euo pipefail
+
+        # Write key to a 0600 temp file. Use mktemp so the path is fresh per
+        # run; trap deletes it on exit/failure. shred preferred if available
+        # to make filesystem recovery harder, falls back to rm.
+        KEY_FILE=$(mktemp)
+        cleanup() { command -v shred >/dev/null 2>&1 && shred -u "$KEY_FILE" 2>/dev/null || rm -f "$KEY_FILE"; }
+        trap cleanup EXIT
+        printf '%s' "$MINISIGN_KEY" > "$KEY_FILE"
+        chmod 600 "$KEY_FILE"
+
+        # Default trusted comment if caller didn't supply one. Trusted
+        # comment is part of the signed payload — gets cryptographically
+        # bound to the file.
+        if [ -z "$TRUSTED_COMMENT" ]; then
+          TRUSTED_COMMENT="$(basename "$ASSET_PATH") signed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        fi
+
+        # minisign reads the password from stdin when stdin is not a TTY.
+        # Pipe the password and use -t for the trusted comment.
+        printf '%s\n' "$MINISIGN_PASSWORD" | minisign -Sm "$ASSET_PATH" -s "$KEY_FILE" -t "$TRUSTED_COMMENT"
+
+        SIG_PATH="${ASSET_PATH}.minisig"
+        if [ ! -f "$SIG_PATH" ]; then
+          echo "::error::Expected signature at $SIG_PATH not found after minisign -S"
+          exit 1
+        fi
+        # Resolve to an absolute path so the signature_path output matches the
+        # action's documented contract regardless of whether asset_path was
+        # passed relative or absolute by the caller.
+        ABS_SIG_PATH=$(readlink -f "$SIG_PATH")
+        echo "signature_path=$ABS_SIG_PATH" >> "$GITHUB_OUTPUT"
+        echo "::notice::Signed: $ABS_SIG_PATH ($(stat -c%s "$ABS_SIG_PATH") bytes)"

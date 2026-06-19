@@ -24,11 +24,13 @@ Conventions enforced by the reusable workflows in this repo. Cross-references th
 
 Stable cadence is naturally slow (weeks/months); automating it adds risk without saving time. Friends-only fleet → human decides what ships.
 
-## Signing (lands in W8)
+## Signing
 
-- Two minisign keys: `wdos-stable.key` (offline, 1Password) + `wdos-dev.key` (GH Actions secret `WDOS_DEV_MINISIGN_KEY` + `WDOS_DEV_MINISIGN_PASSWORD`).
+- Two minisign keys: `wdos-stable.key` (offline source-of-truth in 1Password; staged as Actions secret `WDOS_STABLE_MINISIGN_KEY` for the stable workflow, ideally environment-protected) + `wdos-dev.key` (Actions secret `WDOS_DEV_MINISIGN_KEY` + `WDOS_DEV_MINISIGN_PASSWORD`).
 - Public keys committed at [MicropleDev/watchdog-os/manifest/keys/](https://github.com/MicropleDev/watchdog-os/tree/main/manifest/keys).
-- W8 adds a sign step to every release workflow producing `{asset}.minisig`.
+- Every release workflow signs via the [`actions/minisign-sign`](../.github/actions/minisign-sign/action.yml) composite action — produces `{asset}.minisig` alongside `{asset}.sha256`.
+- Consumer wrappers must include `secrets: inherit` so the secrets pass through to the reusable workflow.
+- Full key-management policy + verification commands: [`SIGNING.md`](SIGNING.md).
 
 ## Asset shape per type
 

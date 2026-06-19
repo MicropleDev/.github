@@ -147,9 +147,23 @@ jobs:
             -X '${{ inputs.version_pkg }}.BuildDate=${BUILD_DATE}'"
           GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/$ASSET" "${{ inputs.build_path }}"
           (cd dist && sha256sum "$ASSET" > "${ASSET}.sha256")
+          echo "asset=$ASSET" >> "$GITHUB_ENV"
 
-      # TODO(W8): sign $ASSET with the dev minisign key (WDOS_DEV_MINISIGN_KEY /
-      # WDOS_DEV_MINISIGN_PASSWORD), produce $ASSET.minisig, add it below.
+      # Sign with the DEV-channel minisign key. Caller must pass
+      # `secrets: inherit` so WDOS_DEV_MINISIGN_KEY/PASSWORD are visible
+      # here (see docs/SIGNING.md). Without them this step fails fast with
+      # a clear error.
+      - name: Sign artifact (dev key)
+        # Pin the internal action to the same commit as the workflow itself.
+        # github.workflow_sha is the SHA of *this* file, so callers pinning
+        # the workflow to a tag/SHA get the action at the same commit — no
+        # drift between the workflow they pinned and the action it invokes.
+        uses: MicropleDev/.github/.github/actions/minisign-sign@${{ github.workflow_sha }}
+        with:
+          asset_path: dist/${{ env.asset }}
+          key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
+          password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
+          trusted_comment: "${{ inputs.binary_name }} ${{ steps.version.outputs.tag }} (dev)"
 
       - name: Create + push tag (only when newly computed)
         if: steps.version.outputs.tag_existed != 'true'
@@ -173,5 +187,6 @@ jobs:
           prerelease: true
           fail_on_unmatched_files: true
           files: |
-            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64
-            dist/${{ inputs.binary_name }}-${{ steps.version.outputs.version }}-linux-arm64.sha256
+            dist/${{ env.asset }}
+            dist/${{ env.asset }}.sha256
+            dist/${{ env.asset }}.minisig
