@@ -15,7 +15,11 @@
 # Tracks: MicropleDev/watchdog-os#60 (W7) and #61 (W8).
 
 name: Minisign sign artifact
-description: Sign a file with minisign, producing a sibling .minisig sidecar.
+description: >-
+  Sign a file with minisign, producing a sibling .minisig sidecar.
+  Requires a Debian/Ubuntu runner (uses apt-get to install minisign, plus
+  GNU coreutils — readlink -f, stat -c). Use runs-on: ubuntu-* on the
+  invoking job.
 
 inputs:
   asset_path:
@@ -40,6 +44,26 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Verify runner is Debian/Ubuntu
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The install step uses apt-get; the sign step uses GNU readlink -f
+        # and stat -c. Fail fast with a clear message instead of cryptic
+        # "command not found" or unexpected stat output on macOS/RHEL/etc.
+        if [ "${RUNNER_OS:-}" != "Linux" ]; then
+          echo "::error::minisign-sign requires a Linux runner. Got RUNNER_OS='${RUNNER_OS:-unset}'. Use 'runs-on: ubuntu-latest' (or another ubuntu-* image)."
+          exit 1
+        fi
+        if ! command -v apt-get >/dev/null 2>&1; then
+          echo "::error::minisign-sign requires apt-get (Debian/Ubuntu). Not found on this runner. Use 'runs-on: ubuntu-*'."
+          exit 1
+        fi
+        if ! command -v sudo >/dev/null 2>&1; then
+          echo "::error::minisign-sign requires sudo to install minisign via apt. Standard GitHub-hosted ubuntu-* runners have sudo by default; container images may not."
+          exit 1
+        fi
+
     - name: Validate inputs
       shell: bash
       env:
