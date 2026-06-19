@@ -1,6 +1,8 @@
 # Reusable workflow for cutting a STABLE Python tarball release.
 #
-# Used by superdog, superdog-listener. Per-repo wrapper example:
+# Intended for superdog and superdog-listener; consumer-repo migration to
+# this workflow is tracked separately as W4 (MicropleDev/watchdog-os#57)
+# and has not yet landed. Per-repo wrapper example:
 #
 #   # .github/workflows/release.yml in a consumer repo
 #   name: Release
@@ -35,7 +37,7 @@
 # The script is responsible for: any extra apt installs, creating the venv,
 # pip install, copying source files into BUNDLE_DIR, optionally pre-downloading
 # models, then producing ASSET_PATH + ASSET_PATH.sha256. The reusable workflow
-# then signs ASSET_PATH (W7/W8) and publishes.
+# then signs ASSET_PATH with minisign and publishes the release.
 
 name: Python tarball release (stable)
 

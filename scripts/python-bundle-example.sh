@@ -64,7 +64,16 @@ fi
 # cp -a system_prompt.txt system_prompt_local.txt "$BUNDLE_DIR/"
 
 # Copy sub-package dirs as whole trees.
-cp -a providers pre_process post_process tools "$BUNDLE_DIR/"
+#
+# This is an example list — edit per repo. The conditional copy means
+# pasting this script into a new repo won't immediately die under
+# `set -e` because one of the dirs happens not to exist; you can ratchet
+# it down to a strict explicit list once you know what your repo needs.
+for SUBDIR in providers pre_process post_process tools; do
+  if [ -d "$SUBDIR" ]; then
+    cp -a "$SUBDIR" "$BUNDLE_DIR/"
+  fi
+done
 
 # Copy the venv we just built. Strip __pycache__ to reduce size.
 cp -a .venv "$BUNDLE_DIR/"
