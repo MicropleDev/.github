@@ -4,7 +4,7 @@
 # tracked as W6 (MicropleDev/watchdog-os#59) and has not yet landed.
 # Per-repo wrapper example:
 #
-#   # .github/workflows/release.yaml in a consumer repo
+#   # .github/workflows/release.yml in a consumer repo
 #   name: Release
 #   permissions:
 #     contents: write
@@ -43,12 +43,18 @@
 #
 # See docs/release-scheme.md for the Flutter consumer-script contract.
 #
-# Cross-cutting secrets (passed through via secrets: inherit):
-# Any secret the consumer wrapper has access to is available to the
-# script via env vars in this workflow's "Build bundle" step. The
-# reusable workflow declares the common Flutter consumer secrets +
-# vars (GitHub App for private deps, backend URLs, runtime tokens)
-# in the build step's env block. Unset ones resolve to empty strings.
+# Cross-cutting secrets/vars: the "Build bundle" step's env block
+# *explicitly enumerates* a fixed set of common Flutter consumer
+# secrets (GitHub App for private deps, runtime tokens) and config
+# vars (backend URLs) that get passed through to the script. Caller
+# must use `secrets: inherit` for these to resolve to the caller
+# repo/org scope; unset values become empty strings.
+#
+# IMPORTANT: only the secrets/vars listed in the env block of the
+# "Build bundle" step reach your script. If your repo needs an
+# additional secret/var, either submit a PR to extend the env block
+# here (preferred — keeps the contract centralized) or fork this
+# workflow.
 
 name: Flutter UI release (stable)
 

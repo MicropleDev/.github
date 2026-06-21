@@ -5,7 +5,7 @@
 # (MicropleDev/watchdog-os#59) and has not yet landed. Per-repo wrapper
 # example:
 #
-#   # .github/workflows/dev-release.yaml in a consumer repo
+#   # .github/workflows/dev-release.yml in a consumer repo
 #   name: Dev Release
 #   permissions:
 #     contents: write

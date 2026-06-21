@@ -1,9 +1,9 @@
 # Reusable workflow for cutting a DEV (prerelease) Python tarball.
 #
-# Intended for superdog and superdog-listener via their consumer-repo
-# `push to main` trigger; consumer migration is tracked as W4
-# (MicropleDev/watchdog-os#57) and has not yet landed. Per-repo wrapper
-# example:
+# Used by superdog and superdog-listener via their consumer-repo
+# `push to main` trigger (W4 migrations merged via
+# MicropleDev/superdog#21 + MicropleDev/superdog-listener#28). Per-repo
+# wrapper example:
 #
 #   # .github/workflows/dev-release.yml in a consumer repo
 #   name: Dev Release

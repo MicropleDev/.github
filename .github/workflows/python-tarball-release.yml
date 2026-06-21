@@ -1,8 +1,8 @@
 # Reusable workflow for cutting a STABLE Python tarball release.
 #
-# Intended for superdog and superdog-listener; consumer-repo migration to
-# this workflow is tracked separately as W4 (MicropleDev/watchdog-os#57)
-# and has not yet landed. Per-repo wrapper example:
+# Used by superdog and superdog-listener (W4 migrations merged via
+# MicropleDev/superdog#21 + MicropleDev/superdog-listener#28). Per-repo
+# wrapper example:
 #
 #   # .github/workflows/release.yml in a consumer repo
 #   name: Release
