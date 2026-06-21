@@ -1,9 +1,9 @@
-# Reusable workflow for cutting a DEV (prerelease) Python tarball.
+# Reusable workflow for cutting a DEV (prerelease) Flutter UI tar.zst.
 #
-# Used by superdog and superdog-listener via their consumer-repo
-# `push to main` trigger (W4 migrations merged via
-# MicropleDev/superdog#21 + MicropleDev/superdog-listener#28). Per-repo
-# wrapper example:
+# Intended for watchdog and setup-dog via their consumer-repo `push to
+# main` trigger; consumer migration is tracked as W6
+# (MicropleDev/watchdog-os#59) and has not yet landed. Per-repo wrapper
+# example:
 #
 #   # .github/workflows/dev-release.yml in a consumer repo
 #   name: Dev Release
@@ -15,42 +15,44 @@
 #       paths-ignore: ['**/*.md', '.github/**', 'docs/**', '.gitignore']
 #   jobs:
 #     dev-release:
-#       uses: MicropleDev/.github/.github/workflows/python-tarball-dev-release.yml@<sha>
+#       uses: MicropleDev/.github/.github/workflows/flutter-ui-dev-release.yml@<sha>
 #       with:
-#         package_name: superdog
-#         python_version: "3.13"
+#         ui_name: watchdog-ui
+#         flutter_version: "3.35.3"
 #       secrets: inherit
 #
-# Per-repo packaging: same contract as python-tarball-release.yml — caller
-# provides scripts/build-bundle.sh that produces $ASSET_PATH + $ASSET_PATH.sha256
-# from the env vars PACKAGE_NAME, VERSION, BUNDLE_DIR, ASSET_PATH.
+# Per-repo packaging: same contract as flutter-ui-release.yml. Caller
+# provides scripts/build-bundle.sh producing BOTH the tar.zst at
+# $ASSET_PATH AND its sha256 sidecar at ${ASSET_PATH}.sha256, using env
+# vars PACKAGE_NAME, VERSION, BUNDLE_DIR, ASSET_PATH, GIT_COMMIT,
+# BUILD_DATE. See docs/release-scheme.md for the Flutter consumer-script
+# contract.
 
-name: Python tarball release (dev)
+name: Flutter UI release (dev)
 
 on:
   workflow_call:
     inputs:
-      package_name:
-        description: "Package name."
+      ui_name:
+        description: "UI package name (e.g. 'watchdog-ui' or 'setupdog-ui'). Used in release name, asset name, and minisign trusted comment. NOT in the git tag — tag is always 'v{version}'."
         required: true
         type: string
-      python_version:
-        description: "Python version (e.g. '3.13')."
+      flutter_version:
+        description: "Flutter SDK version."
         required: true
         type: string
-      runner:
-        description: >-
-          Runner image. Default 'ubuntu-24.04-arm' is GitHub's hosted
-          Linux ARM64 runner (Ampere; rolled out 2024-25) — chosen
-          because the Python services ship a venv with native deps that
-          must match the Pi's arm64 architecture. Requires the org to
-          have access to ARM runners; if your org doesn't, pass
-          'ubuntu-24.04' instead (x86_64 venv, won't run on the Pi but
-          will at least let CI complete for non-deploy testing). Other
-          valid labels: any self-hosted runner the consumer org defines.
+      flutter_channel:
+        description: "Flutter channel (default stable)."
         required: false
         type: string
-        default: "ubuntu-24.04-arm"
+        default: "stable"
+      runner:
+        description: >-
+          Runner image. Default 'ubuntu-24.04' — flutterpi_tool
+          cross-compiles for ARM64 from x86 hosts.
+        required: false
+        type: string
+        default: "ubuntu-24.04"
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -63,7 +65,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: python-tarball-dev-release-${{ github.repository }}-${{ github.ref }}
+  group: flutter-ui-dev-release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -78,14 +80,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          python-version: ${{ inputs.python_version }}
+          flutter-version: ${{ inputs.flutter_version }}
+          channel: ${{ inputs.flutter_channel }}
+          cache: true
 
-      # Single source of truth for the version. Two paths:
-      # - If HEAD already has a dev tag (rerun after partial failure):
-      #   REUSE that tag. Re-publish step will (re)upload assets.
-      # - Otherwise: derive a new dev tag from the latest stable + suffix.
+      - name: Install zstd
+        run: |
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -qq -y zstd
+
+      # Same single-source-of-truth version step as the Python workflow.
       - name: Resolve version (reuse existing dev tag if present, else compute new)
         id: version
         run: |
@@ -120,30 +129,29 @@ jobs:
             echo "tag_existed=$TAG_EXISTED"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Write VERSION + BUILD files for the bundle
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
-          BUILD_DATE: ${{ steps.version.outputs.build_date }}
-        run: |
-          set -euo pipefail
-          echo "$VERSION" > VERSION
-          printf '{"git_commit": "%s", "build_date": "%s"}\n' "${GIT_COMMIT:0:7}" "$BUILD_DATE" > BUILD
-
       - name: Verify per-repo build-bundle.sh exists
         run: |
           set -euo pipefail
           if [ ! -x scripts/build-bundle.sh ]; then
-            echo "::error::Expected an executable scripts/build-bundle.sh in this repo. The reusable Python release workflow delegates per-repo packaging there. See MicropleDev/.github docs/release-scheme.md for the contract."
+            echo "::error::Expected an executable scripts/build-bundle.sh in this repo. See MicropleDev/.github docs/release-scheme.md for the contract."
             exit 1
           fi
 
       - name: Build bundle (per-repo)
         env:
-          PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_NAME: ${{ inputs.ui_name }}
           VERSION: ${{ steps.version.outputs.version }}
-          BUNDLE_DIR: dist/${{ inputs.package_name }}-${{ steps.version.outputs.version }}
-          ASSET_PATH: dist/${{ inputs.package_name }}-${{ steps.version.outputs.version }}.tar.zst
+          BUNDLE_DIR: dist/${{ inputs.ui_name }}-${{ steps.version.outputs.version }}
+          ASSET_PATH: dist/${{ inputs.ui_name }}-${{ steps.version.outputs.version }}.tar.zst
+          GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+          # Pass-through secrets/vars consumer scripts may need.
+          HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
+          WEATHER_APP_ID: ${{ secrets.WEATHER_APP_ID }}
+          WEATHER_APP_PRIVATE_KEY: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
+          SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -159,20 +167,17 @@ jobs:
           echo "asset=$(basename "$ASSET_PATH")" >> "$GITHUB_ENV"
 
       - name: Sign artifact (dev key)
-        # Same-repo internal action. The `uses:` keyword doesn't allow
-        # github-context expressions when this workflow is invoked as a
-        # `workflow_call` reusable workflow (GH resolves uses: at parse
-        # time before contexts are available — would emit "Unrecognized
-        # named-value: 'github'"). So we use @main here and accept that
-        # callers pinning the workflow to a tag/SHA still get the action
-        # at current main. When MicropleDev/.github starts cutting tagged
-        # releases, switch this to the same tag the workflow lives at.
+        # Same-repo internal action. `uses:` doesn't allow github-context
+        # expressions when this workflow is invoked as workflow_call. So
+        # @main with the understanding that callers pinning the workflow
+        # to a tag/SHA still get the action at current main. Switch to a
+        # tag once .github starts cutting tagged releases.
         uses: MicropleDev/.github/.github/actions/minisign-sign@main
         with:
           asset_path: dist/${{ env.asset }}
           key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
           password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
-          trusted_comment: "${{ inputs.package_name }} ${{ steps.version.outputs.tag }} (dev)"
+          trusted_comment: "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }} (dev)"
 
       - name: Create + push tag (only when newly computed)
         if: steps.version.outputs.tag_existed != 'true'
@@ -180,14 +185,14 @@ jobs:
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.package_name }} ${{ steps.version.outputs.tag }}"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Publish GitHub Release (prerelease, idempotent)
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: "${{ inputs.package_name }} ${{ steps.version.outputs.tag }}"
+          name: "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }}"
           prerelease: true
           fail_on_unmatched_files: true
           files: |

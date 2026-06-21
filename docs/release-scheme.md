@@ -66,6 +66,40 @@ The reusable workflow then signs the asset with minisign and publishes it. The s
 
 A canonical example lives in [`scripts/python-bundle-example.sh`](../scripts/python-bundle-example.sh) of this repo.
 
+## Flutter `scripts/build-bundle.sh` contract
+
+The Flutter UI workflows (`flutter-ui-release.yml` / `flutter-ui-dev-release.yml`) use the same delegation pattern. The reusable workflow invokes `scripts/build-bundle.sh` with these env vars set:
+
+| Env var | Value | Example |
+|---|---|---|
+| `PACKAGE_NAME` | the `ui_name` input | `watchdog-ui` |
+| `VERSION` | resolved version (no `v` prefix) | `0.1.0` or `0.1.1-dev.20260619.abc1234` |
+| `BUNDLE_DIR` | staging dir the script may use | `dist/watchdog-ui-0.1.0` |
+| `ASSET_PATH` | output tarball the script must produce | `dist/watchdog-ui-0.1.0.tar.zst` |
+| `GIT_COMMIT` | full HEAD commit SHA | (so the script can pass it as a `--dart-define`) |
+| `BUILD_DATE` | ISO8601 UTC at workflow start | same |
+
+Pass-through env vars from the consumer's secrets/vars scope (unset values become empty strings — script's choice how to handle):
+
+| Var | Source | Typical use |
+|---|---|---|
+| `HEISENBERG_TOKEN` | secret | `--dart-define=HEISENBERG_TOKEN=...` |
+| `WEATHER_APP_ID` / `WEATHER_APP_PRIVATE_KEY` | secret | GitHub App auth for fetching private `dog-libs` / `wd-weather` via `flutter pub get` |
+| `API_BASE_URL` / `WEATHER_API_BASE_URL` / `SOUNDDOG_API_BASE_URL` | vars | `--dart-define=...` |
+
+The script is responsible for:
+1. Installing `flutterpi_tool` (`flutter pub global activate flutterpi_tool`) — the reusable workflow installs the Flutter SDK itself via subosito/flutter-action.
+2. Authenticating to private pub-deps if needed (write to `~/.netrc` or `~/.config/git/credentials` using `WEATHER_APP_*` and a generated GitHub App token).
+3. Running `flutter pub get` (private-deps auth must be in place first).
+4. Building via `flutterpi_tool build --arch=arm64 --cpu=pi4 --release ...` with whatever `--dart-define` flags the app needs.
+5. Locating the flutter-pi output dir (varies between `build/flutter-pi/<arch>/<mode>/` etc.).
+6. Packaging the output dir into `$ASSET_PATH` (tar.zst) at root level (no wrapper directory — flutter-pi expects files at the root of the unpacked dir).
+7. Producing `$ASSET_PATH.sha256`.
+
+The reusable workflow then signs `$ASSET_PATH` with minisign (producing `${ASSET_PATH}.minisig`) and publishes the release with the three files.
+
+A canonical example will land alongside W6 (the consumer migration). The shape is similar to `scripts/python-bundle-example.sh` but with `flutterpi_tool` instead of `pip install`.
+
 ## Bundle channel selection (watchdog-os)
 
 - `CHANNEL: stable` lane → per component picks `prerelease=false AND tag matches v{x.y.z}`. Bundle signed with stable key. `latest-stable.json` pointer.
