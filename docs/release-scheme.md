@@ -79,7 +79,7 @@ The Flutter UI workflows (`flutter-ui-release.yml` / `flutter-ui-dev-release.yml
 | `GIT_COMMIT` | full HEAD commit SHA | (so the script can pass it as a `--dart-define`) |
 | `BUILD_DATE` | ISO8601 UTC at workflow start | same |
 
-Pass-through env vars from the consumer's secrets/vars scope (unset values become empty strings — script's call how to handle):
+Pass-through env vars from the consumer's secrets/vars scope (unset values become empty strings — script's choice how to handle):
 
 | Var | Source | Typical use |
 |---|---|---|

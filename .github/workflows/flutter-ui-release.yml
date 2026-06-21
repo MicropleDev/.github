@@ -62,7 +62,7 @@ on:
   workflow_call:
     inputs:
       ui_name:
-        description: "UI package name (e.g. 'watchdog-ui' or 'setupdog-ui'). Used in tag, asset name, trusted comment."
+        description: "UI package name (e.g. 'watchdog-ui' or 'setupdog-ui'). Used in release name, asset name, and minisign trusted comment. NOT in the git tag — tag is always 'v{version}'."
         required: true
         type: string
       flutter_version:
