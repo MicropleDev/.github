@@ -53,6 +53,15 @@ on:
         required: false
         type: string
         default: "ubuntu-24.04"
+    secrets:
+      GITHUB_APP_TOKEN:
+        description: >-
+          Optional GitHub App installation token (from
+          actions/create-github-app-token in a preceding job). When set,
+          exposed to the build script as $GITHUB_APP_TOKEN so it can
+          authenticate `flutter pub get` for private dependencies.
+          See flutter-ui-release.yml for the two-job wrapper pattern.
+        required: false
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -147,8 +156,10 @@ jobs:
           BUILD_DATE: ${{ steps.version.outputs.build_date }}
           # Pass-through secrets/vars consumer scripts may need.
           HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
-          WEATHER_APP_ID: ${{ secrets.WEATHER_APP_ID }}
-          WEATHER_APP_PRIVATE_KEY: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          # Optional pre-minted GitHub App installation token from a
+          # preceding job. See flutter-ui-release.yml header for the
+          # two-job wrapper pattern.
+          GITHUB_APP_TOKEN: ${{ secrets.GITHUB_APP_TOKEN }}
           API_BASE_URL: ${{ vars.API_BASE_URL }}
           WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
           SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}

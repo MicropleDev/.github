@@ -84,8 +84,54 @@ Pass-through env vars from the consumer's secrets/vars scope (unset values becom
 | Var | Source | Typical use |
 |---|---|---|
 | `HEISENBERG_TOKEN` | secret | `--dart-define=HEISENBERG_TOKEN=...` |
-| `WEATHER_APP_ID` / `WEATHER_APP_PRIVATE_KEY` | secret | GitHub App auth for fetching private `dog-libs` / `wd-weather` via `flutter pub get` |
+| `GITHUB_APP_TOKEN` | named secret from caller's `secrets:` block | Pre-minted GitHub App installation token for authenticating `flutter pub get` against private deps (`dog-libs`, `wd-weather`). See "Two-job wrapper pattern for private pub deps" below. |
 | `API_BASE_URL` / `WEATHER_API_BASE_URL` / `SOUNDDOG_API_BASE_URL` | vars | `--dart-define=...` |
+
+### Two-job wrapper pattern for private pub deps
+
+A reusable-workflow `uses:` call must occupy its caller job entirely — no other steps before/after. To use `actions/create-github-app-token` to fetch a token for private pub deps, the wrapper needs a second job that generates the token and exports it as an output, then the release job passes it as a named secret:
+
+```yaml
+# .github/workflows/release.yml in a consumer repo
+name: Release
+permissions:
+  contents: write
+on:
+  workflow_dispatch: { inputs: { bump_type: { type: choice, options: [patch, minor, major], required: true } } }
+
+jobs:
+  gen-token:
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.app.outputs.token }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@<sha>
+        with:
+          app-id: ${{ secrets.WEATHER_APP_ID }}
+          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          owner: MicropleDev
+
+  release:
+    needs: gen-token
+    uses: MicropleDev/.github/.github/workflows/flutter-ui-release.yml@<sha>
+    with:
+      ui_name: watchdog-ui
+      flutter_version: "3.35.3"
+      bump_type: ${{ inputs.bump_type }}
+      environment: stable-release
+    secrets:
+      GITHUB_APP_TOKEN: ${{ needs.gen-token.outputs.token }}
+      # 'inherit' would pull all other org/repo secrets through. Combine
+      # both forms — named for the token, inherit for the rest:
+      # but you can't combine — pick one. If you need both, list every
+      # passed secret explicitly:
+      WDOS_STABLE_MINISIGN_KEY: ${{ secrets.WDOS_STABLE_MINISIGN_KEY }}
+      WDOS_STABLE_MINISIGN_PASSWORD: ${{ secrets.WDOS_STABLE_MINISIGN_PASSWORD }}
+      HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
+```
+
+> ⚠️ When a caller declares `secrets:` block with named entries, **`secrets: inherit` is NOT applied** — you must list every secret the reusable workflow needs explicitly. If you only need the standard MINISIGN/HEISENBERG flow without `GITHUB_APP_TOKEN`, use the simpler `secrets: inherit` form.
 
 The script is responsible for:
 1. Installing `flutterpi_tool` (`flutter pub global activate flutterpi_tool`) — the reusable workflow installs the Flutter SDK itself via subosito/flutter-action.
