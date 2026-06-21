@@ -28,15 +28,20 @@
 # Per-repo packaging: the caller MUST provide an executable script at
 # `scripts/build-bundle.sh` in the consumer repo that does the Flutter
 # build (incl. any flutterpi_tool invocation, dart-defines, private-deps
-# auth via GitHub App tokens, etc.) and produces a flutter-pi-compatible
-# tar.zst at $ASSET_PATH. The reusable workflow then signs + tags +
-# publishes.
+# auth via GitHub App tokens, etc.) and produces BOTH the tar.zst at
+# $ASSET_PATH AND its sha256 sidecar at ${ASSET_PATH}.sha256. The
+# reusable workflow signs ASSET_PATH (producing a third sidecar
+# ${ASSET_PATH}.minisig) and publishes all three.
 #
 # Env vars supplied by the reusable workflow to the script:
 #   PACKAGE_NAME  — e.g. "watchdog-ui"
 #   VERSION       — e.g. "0.1.0" or "0.1.1-dev.20260619.abc1234"
 #   BUNDLE_DIR    — staging dir (the script may use it or ignore)
 #   ASSET_PATH    — output, e.g. dist/watchdog-ui-0.1.0.tar.zst
+#   GIT_COMMIT    — full HEAD commit (script may pass via --dart-define)
+#   BUILD_DATE    — ISO8601 UTC at workflow start (same)
+#
+# See docs/release-scheme.md for the Flutter consumer-script contract.
 #
 # Cross-cutting secrets (passed through via secrets: inherit):
 # Any secret the consumer wrapper has access to is available to the
@@ -119,7 +124,7 @@ jobs:
         run: |
           set -euo pipefail
           if EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1); [ -n "$EXISTING" ]; then
-            echo "::error::HEAD already has stable tag $EXISTING. Refuse to cut another stable on the same commit."
+            echo "::error::HEAD already has stable tag $EXISTING. Refuse to cut another stable on the same commit. Resolve manually (re-upload release assets to $EXISTING, or delete the partial tag and rerun)."
             exit 1
           fi
 

@@ -22,8 +22,11 @@
 #       secrets: inherit
 #
 # Per-repo packaging: same contract as flutter-ui-release.yml. Caller
-# provides scripts/build-bundle.sh producing $ASSET_PATH + sha256 from
-# the env vars PACKAGE_NAME, VERSION, BUNDLE_DIR, ASSET_PATH.
+# provides scripts/build-bundle.sh producing BOTH the tar.zst at
+# $ASSET_PATH AND its sha256 sidecar at ${ASSET_PATH}.sha256, using env
+# vars PACKAGE_NAME, VERSION, BUNDLE_DIR, ASSET_PATH, GIT_COMMIT,
+# BUILD_DATE. See docs/release-scheme.md for the Flutter consumer-script
+# contract.
 
 name: Flutter UI release (dev)
 
