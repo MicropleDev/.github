@@ -1,0 +1,245 @@
+# Reusable workflow for cutting a STABLE Flutter UI tar.zst release.
+#
+# Intended for watchdog and setup-dog; consumer-repo migration is
+# tracked as W6 (MicropleDev/watchdog-os#59) and has not yet landed.
+# Per-repo wrapper example:
+#
+#   # .github/workflows/release.yaml in a consumer repo
+#   name: Release
+#   permissions:
+#     contents: write
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         bump_type:
+#           type: choice
+#           options: [patch, minor, major]
+#           required: true
+#   jobs:
+#     release:
+#       uses: MicropleDev/.github/.github/workflows/flutter-ui-release.yml@<sha>
+#       with:
+#         ui_name: watchdog-ui
+#         flutter_version: "3.35.3"
+#         bump_type: ${{ inputs.bump_type }}
+#         environment: stable-release
+#       secrets: inherit
+#
+# Per-repo packaging: the caller MUST provide an executable script at
+# `scripts/build-bundle.sh` in the consumer repo that does the Flutter
+# build (incl. any flutterpi_tool invocation, dart-defines, private-deps
+# auth via GitHub App tokens, etc.) and produces a flutter-pi-compatible
+# tar.zst at $ASSET_PATH. The reusable workflow then signs + tags +
+# publishes.
+#
+# Env vars supplied by the reusable workflow to the script:
+#   PACKAGE_NAME  — e.g. "watchdog-ui"
+#   VERSION       — e.g. "0.1.0" or "0.1.1-dev.20260619.abc1234"
+#   BUNDLE_DIR    — staging dir (the script may use it or ignore)
+#   ASSET_PATH    — output, e.g. dist/watchdog-ui-0.1.0.tar.zst
+#
+# Cross-cutting secrets (passed through via secrets: inherit):
+# Any secret the consumer wrapper has access to is available to the
+# script via env vars in this workflow's "Build bundle" step. The
+# reusable workflow declares the common Flutter consumer secrets +
+# vars (GitHub App for private deps, backend URLs, runtime tokens)
+# in the build step's env block. Unset ones resolve to empty strings.
+
+name: Flutter UI release (stable)
+
+on:
+  workflow_call:
+    inputs:
+      ui_name:
+        description: "UI package name (e.g. 'watchdog-ui' or 'setupdog-ui'). Used in tag, asset name, trusted comment."
+        required: true
+        type: string
+      flutter_version:
+        description: "Flutter SDK version (e.g. '3.35.3')."
+        required: true
+        type: string
+      flutter_channel:
+        description: "Flutter channel (stable / beta / master). Default stable."
+        required: false
+        type: string
+        default: "stable"
+      bump_type:
+        description: "Semver bump applied to the latest v{x.y.z} tag (patch | minor | major)."
+        required: true
+        type: string
+      runner:
+        description: >-
+          Runner image. Default 'ubuntu-24.04' — flutterpi_tool
+          cross-compiles for ARM64 from x86 hosts, so we don't need an
+          ARM runner. (Python services need ARM because they ship a
+          native venv; Flutter ships pre-compiled binaries.)
+        required: false
+        type: string
+        default: "ubuntu-24.04"
+      environment:
+        description: >-
+          Optional GH Actions environment (e.g. 'stable-release') for
+          env-protected stable signing secrets. Default empty = no env.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      version:
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        value: ${{ jobs.release.outputs.tag }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flutter-ui-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Validate bump_type
+        run: |
+          case "${{ inputs.bump_type }}" in
+            patch|minor|major) ;;
+            *) echo "::error::bump_type must be patch|minor|major, got '${{ inputs.bump_type }}'"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0  # need full tag history
+
+      - name: Refuse if HEAD already has a stable tag
+        run: |
+          set -euo pipefail
+          if EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1); [ -n "$EXISTING" ]; then
+            echo "::error::HEAD already has stable tag $EXISTING. Refuse to cut another stable on the same commit."
+            exit 1
+          fi
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ inputs.flutter_version }}
+          channel: ${{ inputs.flutter_channel }}
+          cache: true
+
+      - name: Install zstd
+        run: |
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -qq -y zstd
+
+      - name: Compute version (from latest v{x.y.z} tag + bump)
+        id: version
+        run: |
+          set -euo pipefail
+          LATEST=$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          BASE=${LATEST#v}
+          BASE=${BASE:-0.0.0}
+          IFS='.' read -r MAJ MIN PAT <<<"$BASE"
+          case "${{ inputs.bump_type }}" in
+            major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
+            minor) MIN=$((MIN+1)); PAT=0 ;;
+            patch) PAT=$((PAT+1)) ;;
+          esac
+          VERSION="${MAJ}.${MIN}.${PAT}"
+          TAG="v${VERSION}"
+          GIT_COMMIT=$(git rev-parse HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "git_commit=$GIT_COMMIT"
+            echo "build_date=$BUILD_DATE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Computed stable: $TAG (from base v${BASE}, bump=${{ inputs.bump_type }})"
+
+      - name: Refuse to overwrite an existing tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "::error::Tag ${{ steps.version.outputs.tag }} already exists. Pick a different bump_type."
+            exit 1
+          fi
+
+      - name: Verify per-repo build-bundle.sh exists
+        run: |
+          set -euo pipefail
+          if [ ! -x scripts/build-bundle.sh ]; then
+            echo "::error::Expected an executable scripts/build-bundle.sh in this repo. The reusable Flutter UI release workflow delegates per-repo packaging there. See MicropleDev/.github docs/release-scheme.md for the contract."
+            exit 1
+          fi
+
+      - name: Build bundle (per-repo)
+        env:
+          # Standard contract — every per-repo script can rely on these
+          PACKAGE_NAME: ${{ inputs.ui_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUNDLE_DIR: dist/${{ inputs.ui_name }}-${{ steps.version.outputs.version }}
+          ASSET_PATH: dist/${{ inputs.ui_name }}-${{ steps.version.outputs.version }}.tar.zst
+          GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+          # Pass-through secrets/vars consumer scripts may need. Unset
+          # in this caller? They become empty strings — script's choice
+          # how to handle.
+          HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
+          WEATHER_APP_ID: ${{ secrets.WEATHER_APP_ID }}
+          WEATHER_APP_PRIVATE_KEY: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
+          SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          scripts/build-bundle.sh
+          if [ ! -f "$ASSET_PATH" ]; then
+            echo "::error::scripts/build-bundle.sh did not produce $ASSET_PATH"
+            exit 1
+          fi
+          if [ ! -f "${ASSET_PATH}.sha256" ]; then
+            echo "::error::scripts/build-bundle.sh did not produce ${ASSET_PATH}.sha256"
+            exit 1
+          fi
+          echo "asset=$(basename "$ASSET_PATH")" >> "$GITHUB_ENV"
+
+      - name: Sign artifact (stable key)
+        # Same-repo internal action. The `uses:` keyword doesn't allow
+        # github-context expressions when this workflow is invoked as a
+        # `workflow_call` reusable workflow. So we use @main here and
+        # accept that callers pinning the workflow to a tag/SHA still get
+        # the action at current main. When MicropleDev/.github starts
+        # cutting tagged releases, switch this to the same tag the
+        # workflow lives at.
+        uses: MicropleDev/.github/.github/actions/minisign-sign@main
+        with:
+          asset_path: dist/${{ env.asset }}
+          key: ${{ secrets.WDOS_STABLE_MINISIGN_KEY }}
+          password: ${{ secrets.WDOS_STABLE_MINISIGN_PASSWORD }}
+          trusted_comment: "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }} (stable)"
+
+      - name: Create + push tag
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }}"
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ env.asset }}
+            dist/${{ env.asset }}.sha256
+            dist/${{ env.asset }}.minisig

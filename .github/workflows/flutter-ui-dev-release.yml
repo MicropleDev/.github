@@ -1,0 +1,198 @@
+# Reusable workflow for cutting a DEV (prerelease) Flutter UI tar.zst.
+#
+# Intended for watchdog and setup-dog via their consumer-repo `push to
+# main` trigger; consumer migration is tracked as W6
+# (MicropleDev/watchdog-os#59) and has not yet landed. Per-repo wrapper
+# example:
+#
+#   # .github/workflows/dev-release.yaml in a consumer repo
+#   name: Dev Release
+#   permissions:
+#     contents: write
+#   on:
+#     push:
+#       branches: [main]
+#       paths-ignore: ['**/*.md', '.github/**', 'docs/**', '.gitignore']
+#   jobs:
+#     dev-release:
+#       uses: MicropleDev/.github/.github/workflows/flutter-ui-dev-release.yml@<sha>
+#       with:
+#         ui_name: watchdog-ui
+#         flutter_version: "3.35.3"
+#       secrets: inherit
+#
+# Per-repo packaging: same contract as flutter-ui-release.yml. Caller
+# provides scripts/build-bundle.sh producing $ASSET_PATH + sha256 from
+# the env vars PACKAGE_NAME, VERSION, BUNDLE_DIR, ASSET_PATH.
+
+name: Flutter UI release (dev)
+
+on:
+  workflow_call:
+    inputs:
+      ui_name:
+        description: "UI package name (e.g. 'watchdog-ui' or 'setupdog-ui')."
+        required: true
+        type: string
+      flutter_version:
+        description: "Flutter SDK version."
+        required: true
+        type: string
+      flutter_channel:
+        description: "Flutter channel (default stable)."
+        required: false
+        type: string
+        default: "stable"
+      runner:
+        description: >-
+          Runner image. Default 'ubuntu-24.04' — flutterpi_tool
+          cross-compiles for ARM64 from x86 hosts.
+        required: false
+        type: string
+        default: "ubuntu-24.04"
+    outputs:
+      version:
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        value: ${{ jobs.release.outputs.tag }}
+      tag_existed:
+        value: ${{ jobs.release.outputs.tag_existed }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flutter-ui-dev-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      tag_existed: ${{ steps.version.outputs.tag_existed }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ inputs.flutter_version }}
+          channel: ${{ inputs.flutter_channel }}
+          cache: true
+
+      - name: Install zstd
+        run: |
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -qq -y zstd
+
+      # Same single-source-of-truth version step as the Python workflow.
+      - name: Resolve version (reuse existing dev tag if present, else compute new)
+        id: version
+        run: |
+          set -euo pipefail
+          EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.' | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            TAG="$EXISTING"
+            VERSION="${TAG#v}"
+            TAG_EXISTED=true
+            echo "::notice::Reusing existing dev tag $TAG (rerun / recovery path)."
+          else
+            LATEST=$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+            BASE=${LATEST#v}
+            BASE=${BASE:-0.0.0}
+            IFS='.' read -r MAJ MIN PAT <<<"$BASE"
+            PAT=$((PAT+1))
+            NEXT="${MAJ}.${MIN}.${PAT}"
+            STAMP=$(date -u +%Y%m%d)
+            SHORT=$(git rev-parse --short HEAD)
+            VERSION="${NEXT}-dev.${STAMP}.${SHORT}"
+            TAG="v${VERSION}"
+            TAG_EXISTED=false
+            echo "Computed new dev: $TAG (base v${NEXT} = prior stable v${BASE:-0.0.0} + 1 patch)"
+          fi
+          GIT_COMMIT=$(git rev-parse HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "git_commit=$GIT_COMMIT"
+            echo "build_date=$BUILD_DATE"
+            echo "tag_existed=$TAG_EXISTED"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify per-repo build-bundle.sh exists
+        run: |
+          set -euo pipefail
+          if [ ! -x scripts/build-bundle.sh ]; then
+            echo "::error::Expected an executable scripts/build-bundle.sh in this repo. See MicropleDev/.github docs/release-scheme.md for the contract."
+            exit 1
+          fi
+
+      - name: Build bundle (per-repo)
+        env:
+          PACKAGE_NAME: ${{ inputs.ui_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUNDLE_DIR: dist/${{ inputs.ui_name }}-${{ steps.version.outputs.version }}
+          ASSET_PATH: dist/${{ inputs.ui_name }}-${{ steps.version.outputs.version }}.tar.zst
+          GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+          # Pass-through secrets/vars consumer scripts may need.
+          HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
+          WEATHER_APP_ID: ${{ secrets.WEATHER_APP_ID }}
+          WEATHER_APP_PRIVATE_KEY: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
+          SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          scripts/build-bundle.sh
+          if [ ! -f "$ASSET_PATH" ]; then
+            echo "::error::scripts/build-bundle.sh did not produce $ASSET_PATH"
+            exit 1
+          fi
+          if [ ! -f "${ASSET_PATH}.sha256" ]; then
+            echo "::error::scripts/build-bundle.sh did not produce ${ASSET_PATH}.sha256"
+            exit 1
+          fi
+          echo "asset=$(basename "$ASSET_PATH")" >> "$GITHUB_ENV"
+
+      - name: Sign artifact (dev key)
+        # Same-repo internal action. `uses:` doesn't allow github-context
+        # expressions when this workflow is invoked as workflow_call. So
+        # @main with the understanding that callers pinning the workflow
+        # to a tag/SHA still get the action at current main. Switch to a
+        # tag once .github starts cutting tagged releases.
+        uses: MicropleDev/.github/.github/actions/minisign-sign@main
+        with:
+          asset_path: dist/${{ env.asset }}
+          key: ${{ secrets.WDOS_DEV_MINISIGN_KEY }}
+          password: ${{ secrets.WDOS_DEV_MINISIGN_PASSWORD }}
+          trusted_comment: "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }} (dev)"
+
+      - name: Create + push tag (only when newly computed)
+        if: steps.version.outputs.tag_existed != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub Release (prerelease, idempotent)
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "${{ inputs.ui_name }} ${{ steps.version.outputs.tag }}"
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ env.asset }}
+            dist/${{ env.asset }}.sha256
+            dist/${{ env.asset }}.minisig
