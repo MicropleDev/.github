@@ -94,6 +94,18 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      GITHUB_APP_TOKEN:
+        description: >-
+          Optional GitHub App installation token (from
+          actions/create-github-app-token in a preceding job). When set,
+          exposed to the build script as $GITHUB_APP_TOKEN so it can
+          authenticate `flutter pub get` for private dependencies
+          (wd-weather, dog-libs, etc.). Pass via:
+            secrets:
+              GITHUB_APP_TOKEN: ${{ needs.gen-token.outputs.token }}
+          See docs/release-scheme.md for the two-job wrapper pattern.
+        required: false
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -201,8 +213,12 @@ jobs:
           # in this caller? They become empty strings — script's choice
           # how to handle.
           HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
-          WEATHER_APP_ID: ${{ secrets.WEATHER_APP_ID }}
-          WEATHER_APP_PRIVATE_KEY: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          # Optional pre-minted GitHub App installation token from a
+          # preceding job (see secrets: GITHUB_APP_TOKEN above). When
+          # the consumer needs private pub deps, the two-job wrapper
+          # pattern is the cleanest path because workflow_call uses:
+          # can't sit in the same job as actions/create-github-app-token.
+          GITHUB_APP_TOKEN: ${{ secrets.GITHUB_APP_TOKEN }}
           API_BASE_URL: ${{ vars.API_BASE_URL }}
           WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
           SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}
