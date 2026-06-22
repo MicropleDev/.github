@@ -94,18 +94,19 @@ on:
         required: false
         type: string
         default: ""
-    secrets:
-      GITHUB_APP_TOKEN:
-        description: >-
-          Optional GitHub App installation token (from
-          actions/create-github-app-token in a preceding job). When set,
-          exposed to the build script as $GITHUB_APP_TOKEN so it can
-          authenticate `flutter pub get` for private dependencies
-          (wd-weather, dog-libs, etc.). Pass via:
-            secrets:
-              GITHUB_APP_TOKEN: ${{ needs.gen-token.outputs.token }}
-          See docs/release-scheme.md for the two-job wrapper pattern.
-        required: false
+    # No `secrets:` block declared on purpose. Declaring it makes
+    # workflow_call STRICT — callers can ONLY pass declared secrets.
+    # We want callers to use `secrets: inherit`, which passes all
+    # available secrets through and lets the reusable workflow's job
+    # resolve them with its `environment:` scope. That's also the
+    # cleanest path for env-protected stable signing — no need for
+    # the caller to declare `environment:` (which isn't even allowed
+    # on a `uses:` job per GH Actions schema).
+    #
+    # Need a GitHub App token for private pub deps? Set WEATHER_APP_ID
+    # and WEATHER_APP_PRIVATE_KEY as secrets in the caller's scope; the
+    # "Mint GitHub App token" step below picks them up via inherit and
+    # exposes GITHUB_APP_TOKEN to the build script.
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -145,6 +146,20 @@ jobs:
             echo "::error::HEAD already has stable tag $EXISTING. Refuse to cut another stable on the same commit. Resolve manually (re-upload release assets to $EXISTING, or delete the partial tag and rerun)."
             exit 1
           fi
+
+      # Mint a GitHub App installation token if the caller has supplied
+      # WEATHER_APP_ID + WEATHER_APP_PRIVATE_KEY. Token is exported to
+      # the build script via the env block below as GITHUB_APP_TOKEN.
+      # Skipped (output empty) when either secret is unset, so consumers
+      # without private pub deps don't need to wire app credentials.
+      - name: Mint GitHub App installation token (if app credentials set)
+        id: app-token
+        if: ${{ secrets.WEATHER_APP_ID != '' && secrets.WEATHER_APP_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.WEATHER_APP_ID }}
+          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -210,15 +225,12 @@ jobs:
           GIT_COMMIT: ${{ steps.version.outputs.git_commit }}
           BUILD_DATE: ${{ steps.version.outputs.build_date }}
           # Pass-through secrets/vars consumer scripts may need. Unset
-          # in this caller? They become empty strings — script's choice
-          # how to handle.
+          # values become empty strings — script's choice how to handle.
           HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
-          # Optional pre-minted GitHub App installation token from a
-          # preceding job (see secrets: GITHUB_APP_TOKEN above). When
-          # the consumer needs private pub deps, the two-job wrapper
-          # pattern is the cleanest path because workflow_call uses:
-          # can't sit in the same job as actions/create-github-app-token.
-          GITHUB_APP_TOKEN: ${{ secrets.GITHUB_APP_TOKEN }}
+          # GitHub App installation token minted in the step above (empty
+          # if the consumer doesn't have WEATHER_APP_ID / WEATHER_APP_PRIVATE_KEY
+          # secrets set).
+          GITHUB_APP_TOKEN: ${{ steps.app-token.outputs.token }}
           API_BASE_URL: ${{ vars.API_BASE_URL }}
           WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
           SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}

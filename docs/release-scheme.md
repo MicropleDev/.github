@@ -87,9 +87,9 @@ Pass-through env vars from the consumer's secrets/vars scope (unset values becom
 | `GITHUB_APP_TOKEN` | named secret from caller's `secrets:` block | Pre-minted GitHub App installation token for authenticating `flutter pub get` against private deps (`dog-libs`, `wd-weather`). See "Two-job wrapper pattern for private pub deps" below. |
 | `API_BASE_URL` / `WEATHER_API_BASE_URL` / `SOUNDDOG_API_BASE_URL` | vars | `--dart-define=...` |
 
-### Two-job wrapper pattern for private pub deps
+### Private pub deps (GitHub App token)
 
-A reusable-workflow `uses:` call must occupy its caller job entirely — no other steps before/after. To use `actions/create-github-app-token` to fetch a token for private pub deps, the wrapper needs a second job that generates the token and exports it as an output, then the release job passes it as a named secret:
+If your Flutter app pulls private deps via `flutter pub get` (e.g. `dog-libs`, `wd-weather`), the reusable workflow mints a GitHub App installation token internally — you just need `WEATHER_APP_ID` and `WEATHER_APP_PRIVATE_KEY` set as secrets in your caller's scope.
 
 ```yaml
 # .github/workflows/release.yml in a consumer repo
@@ -100,38 +100,22 @@ on:
   workflow_dispatch: { inputs: { bump_type: { type: choice, options: [patch, minor, major], required: true } } }
 
 jobs:
-  gen-token:
-    runs-on: ubuntu-latest
-    outputs:
-      token: ${{ steps.app.outputs.token }}
-    steps:
-      - id: app
-        uses: actions/create-github-app-token@<sha>
-        with:
-          app-id: ${{ secrets.WEATHER_APP_ID }}
-          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
-          owner: MicropleDev
-
   release:
-    needs: gen-token
     uses: MicropleDev/.github/.github/workflows/flutter-ui-release.yml@<sha>
     with:
       ui_name: watchdog-ui
       flutter_version: "3.35.3"
       bump_type: ${{ inputs.bump_type }}
       environment: stable-release
-    secrets:
-      GITHUB_APP_TOKEN: ${{ needs.gen-token.outputs.token }}
-      # 'inherit' would pull all other org/repo secrets through. Combine
-      # both forms — named for the token, inherit for the rest:
-      # but you can't combine — pick one. If you need both, list every
-      # passed secret explicitly:
-      WDOS_STABLE_MINISIGN_KEY: ${{ secrets.WDOS_STABLE_MINISIGN_KEY }}
-      WDOS_STABLE_MINISIGN_PASSWORD: ${{ secrets.WDOS_STABLE_MINISIGN_PASSWORD }}
-      HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
+    secrets: inherit
 ```
 
-> ⚠️ When a caller declares `secrets:` block with named entries, **`secrets: inherit` is NOT applied** — you must list every secret the reusable workflow needs explicitly. If you only need the standard MINISIGN/HEISENBERG flow without `GITHUB_APP_TOKEN`, use the simpler `secrets: inherit` form.
+The reusable workflow's `Mint GitHub App installation token` step runs only when both `WEATHER_APP_ID` and `WEATHER_APP_PRIVATE_KEY` are set; otherwise it's skipped and `GITHUB_APP_TOKEN` in the build script's env stays empty (fine for consumers without private deps).
+
+> Two pitfalls worth knowing for future migrations:
+>
+> 1. **`environment:` is NOT allowed on a job that uses `uses:`** to call a reusable workflow. Env scoping for environment-protected secrets must happen via the reusable workflow's `environment: ${{ inputs.environment }}` declaration (combined with `secrets: inherit` from the caller — that's how env-scoped secrets resolve correctly in the reusable workflow's job context).
+> 2. **Declaring a `secrets:` block on `workflow_call` makes it STRICT** — only declared secrets can be passed. Combine with `secrets: inherit` from the caller for maximum flexibility (any caller-scope secret flows through; resolution happens in the reusable workflow's job with its env scope).
 
 The script is responsible for:
 1. Installing `flutterpi_tool` (`flutter pub global activate flutterpi_tool`) — the reusable workflow installs the Flutter SDK itself via subosito/flutter-action.
