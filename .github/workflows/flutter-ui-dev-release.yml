@@ -53,15 +53,9 @@ on:
         required: false
         type: string
         default: "ubuntu-24.04"
-    secrets:
-      GITHUB_APP_TOKEN:
-        description: >-
-          Optional GitHub App installation token (from
-          actions/create-github-app-token in a preceding job). When set,
-          exposed to the build script as $GITHUB_APP_TOKEN so it can
-          authenticate `flutter pub get` for private dependencies.
-          See flutter-ui-release.yml for the two-job wrapper pattern.
-        required: false
+    # No `secrets:` block declared — see flutter-ui-release.yml header
+    # for the rationale. Callers use `secrets: inherit`; we mint any
+    # needed GitHub App token internally.
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -88,6 +82,20 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+
+      # Mint a GitHub App installation token if the caller has supplied
+      # WEATHER_APP_ID + WEATHER_APP_PRIVATE_KEY. Token exposed to the
+      # build script via the env block below. Skipped (output empty) when
+      # either secret is unset, so consumers without private pub deps
+      # don't need to wire app credentials.
+      - name: Mint GitHub App installation token (if app credentials set)
+        id: app-token
+        if: ${{ secrets.WEATHER_APP_ID != '' && secrets.WEATHER_APP_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.WEATHER_APP_ID }}
+          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -156,10 +164,8 @@ jobs:
           BUILD_DATE: ${{ steps.version.outputs.build_date }}
           # Pass-through secrets/vars consumer scripts may need.
           HEISENBERG_TOKEN: ${{ secrets.HEISENBERG_TOKEN }}
-          # Optional pre-minted GitHub App installation token from a
-          # preceding job. See flutter-ui-release.yml header for the
-          # two-job wrapper pattern.
-          GITHUB_APP_TOKEN: ${{ secrets.GITHUB_APP_TOKEN }}
+          # Minted token from the step above (empty if app credentials unset).
+          GITHUB_APP_TOKEN: ${{ steps.app-token.outputs.token }}
           API_BASE_URL: ${{ vars.API_BASE_URL }}
           WEATHER_API_BASE_URL: ${{ vars.WEATHER_API_BASE_URL }}
           SOUNDDOG_API_BASE_URL: ${{ vars.SOUNDDOG_API_BASE_URL }}
