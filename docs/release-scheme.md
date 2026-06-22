@@ -112,10 +112,11 @@ jobs:
 
 The reusable workflow's `Mint GitHub App installation token` step runs only when both `WEATHER_APP_ID` and `WEATHER_APP_PRIVATE_KEY` are set; otherwise it's skipped and `GITHUB_APP_TOKEN` in the build script's env stays empty (fine for consumers without private deps).
 
-> Two pitfalls worth knowing for future migrations:
+> Three pitfalls worth knowing for future migrations:
 >
 > 1. **`environment:` is NOT allowed on a job that uses `uses:`** to call a reusable workflow. Env scoping for environment-protected secrets must happen via the reusable workflow's `environment: ${{ inputs.environment }}` declaration (combined with `secrets: inherit` from the caller — that's how env-scoped secrets resolve correctly in the reusable workflow's job context).
 > 2. **Declaring a `secrets:` block on `workflow_call` makes it STRICT** — only declared secrets can be passed. Combine with `secrets: inherit` from the caller for maximum flexibility (any caller-scope secret flows through; resolution happens in the reusable workflow's job with its env scope).
+> 3. **`secrets.X` is NOT allowed in step-level `if:` conditions** in reusable workflows (`Unrecognized named-value: 'secrets'`). To gate a step on a secret being set, use a two-step pattern: a check step that maps the secret to `env:` and writes a `has_X=true|false` value to `$GITHUB_OUTPUT`, then gate the real step on `steps.check.outputs.has_X == 'true'`.
 
 The script is responsible for:
 1. Installing `flutterpi_tool` (`flutter pub global activate flutterpi_tool`) — the reusable workflow installs the Flutter SDK itself via subosito/flutter-action.
