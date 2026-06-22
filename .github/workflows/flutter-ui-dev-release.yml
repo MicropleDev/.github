@@ -84,13 +84,25 @@ jobs:
           fetch-depth: 0
 
       # Mint a GitHub App installation token if the caller has supplied
-      # WEATHER_APP_ID + WEATHER_APP_PRIVATE_KEY. Token exposed to the
-      # build script via the env block below. Skipped (output empty) when
-      # either secret is unset, so consumers without private pub deps
-      # don't need to wire app credentials.
-      - name: Mint GitHub App installation token (if app credentials set)
+      # WEATHER_APP_ID + WEATHER_APP_PRIVATE_KEY. Two-step pattern
+      # because GH Actions doesn't allow `secrets.X` in step-level `if:`
+      # for reusable workflows. See flutter-ui-release.yml for details.
+      - name: Check for GitHub App credentials
+        id: check-app-creds
+        env:
+          WEATHER_APP_ID: ${{ secrets.WEATHER_APP_ID }}
+          WEATHER_APP_PRIVATE_KEY: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WEATHER_APP_ID:-}" ] && [ -n "${WEATHER_APP_PRIVATE_KEY:-}" ]; then
+            echo "has_app_creds=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_app_creds=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint GitHub App installation token
         id: app-token
-        if: ${{ secrets.WEATHER_APP_ID != '' && secrets.WEATHER_APP_PRIVATE_KEY != '' }}
+        if: steps.check-app-creds.outputs.has_app_creds == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.WEATHER_APP_ID }}
