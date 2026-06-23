@@ -14,22 +14,26 @@ should know what kind of thing it is and roughly where it runs.
 |---|---|---|---|
 | **UI app** (Flutter, user-facing) | `{verb}dog` | A Flutter app the human looks at on the Pi screen | [setupdog](https://github.com/MicropleDev/setup-dog), [watchdog](https://github.com/MicropleDev/watchdog), [updatedog](https://github.com/MicropleDev/updatedog) |
 | **Local service** (Pi-resident, headless) | random name (see below) | A daemon running on the Pi with no UI | [heisenberg](https://github.com/MicropleDev/heisenberg), [pinkman](https://github.com/MicropleDev/pinkman), [gustavo](https://github.com/MicropleDev/AlphaDog) (formerly `alphadog`) |
-| **Cloud helper service** ("minion") | `{role}-minion` | Cloud service that helps a device or user — auth, telemetry, broker | watchdog-auth-minion |
+| **Cloud helper service** ("minion") | `watchdog-{role}-minion` | Cloud service that helps a device or user — auth, telemetry, broker. The `watchdog-` prefix is the fleet brand; minion-class services explicitly belong to a fleet. | watchdog-auth-minion |
 | **Cloud data service** ("server") | `{feature}-server` | Cloud service that serves user-facing feature data | [weather-server](https://github.com/MicropleDev/weather-server), [sports-server](https://github.com/MicropleDev/sports-server) |
 | **Flutter feature package** | `wd-{feature}` | Flutter package consumed by the UI apps; one repo per feature | [wd-weather](https://github.com/MicropleDev/wd-weather), [wd-sports](https://github.com/MicropleDev/wd-sports) |
 
-### Why the split between `-minion` and `-server`?
+### Why the split between `watchdog-*-minion` and `*-server`?
 
-- `-minion` = **device-facing helpers** (auth-minion brokers OAuth so the
-  device never needs the client secret; future telemetry-minion, etc.).
-  Job is to *help the device do its thing.*
-- `-server` = **user-facing data backends** (weather-server proxies
+- `watchdog-{role}-minion` = **device-facing helpers** (watchdog-auth-minion
+  brokers OAuth so the device never needs the client secret; future
+  watchdog-telemetry-minion, etc.). Job is to *help the device do its thing.*
+  Carries the `watchdog-` fleet prefix because minion-class services
+  are inherently fleet-specific.
+- `{feature}-server` = **user-facing data backends** (weather-server proxies
   WeatherAPI; sports-server caches football data). Job is to *answer
-  user-content queries.*
+  user-content queries.* No fleet prefix — these are conceptually
+  general-purpose data services that the watchdog fleet happens to be
+  their first consumer.
 
 When in doubt: if the response payload goes onto the Pi's display, it's
 a `-server`. If the response payload helps the Pi talk to the rest of
-the world, it's a `-minion`.
+the world, it's a `watchdog-*-minion`.
 
 ## Random names for local services — the Breaking Bad convention
 
@@ -68,12 +72,11 @@ picks come quickly. **Reuse a name only if the role genuinely differs**
 | **SoundDog** / `wd_soundcloud` | Local audio service + Flutter package | Being decommissioned (feature dropped). No rename — just goes away. |
 | **alphadog** | Local service (boot decider) | **Being renamed to `gustavo`** as a Phase 0 cleanup. Until that rename lands, refs to `alphadog` in install.sh / manifests are valid. |
 | **setup-dog** | UI app (setup wizard) | **Being renamed to `setupdog`** — repo has a hyphen, convention is hyphen-less (`watchdog`, `updatedog`). Binary + Flutter package output already match the hyphen-less form (`setupdog-ui`). |
-| **watchdog-auth-minion** | Cloud helper (OAuth broker) | **Pending decision: rename to `auth-minion`?** Convention is `{role}-minion`; the `watchdog-` prefix is fleet branding that's arguably redundant given the `MicropleDev/` org namespace. Leaning toward rename. |
 | **watchdog-os** | Pi OS bundle / installer repo | Not a service or UI — meta-repo for the bundle. The `-os` suffix is clearer than `wd-os`. Leave. |
 | **dog-libs** | Shared Flutter packages umbrella | Meta-collection. Naming describes the *collection*, not the contents. Leave. |
 | **dogserver** | Shared Go module (extracted from sports-server) | Meta-collection. Leave. |
 
-> **Open question:** the WatchDog Roadmap project board lists `wd-minions` as a Component option but no matching repo appears to exist in `MicropleDev/`. Either a stale board option, a planned umbrella, or a misclassification. TODO: investigate + resolve (create / remove from board / document purpose).
+> **Note:** `MicropleDev/wd-minions` was created as a planned Go-services umbrella but never developed past a scaffold. Being archived; pair-minion functionality landed in heisenberg / setup-dog / watchdog-auth-minion instead. The board's `wd-minions` Component option is being removed.
 
 ## Renaming an existing repo or component
 
