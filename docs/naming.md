@@ -65,11 +65,15 @@ picks come quickly. **Reuse a name only if the role genuinely differs**
 | Name | What it is | Why it stays |
 |---|---|---|
 | **superdog** (+ `superdog-listener`) | Local services (LLM voice pipeline + wake-word) | Predates the convention. Deeply established — shipped binaries, install scripts, env templates, env vars in 5+ repos. Cost of rename is high for low gain. Reads as "random-ish dog name", close enough. |
-| **SoundDog** / `wd-soundcloud` | Local audio service + Flutter package | Being decommissioned (feature dropped). No rename — just goes away. |
+| **SoundDog** / `wd_soundcloud` | Local audio service + Flutter package | Being decommissioned (feature dropped). No rename — just goes away. |
 | **alphadog** | Local service (boot decider) | **Being renamed to `gustavo`** as a Phase 0 cleanup. Until that rename lands, refs to `alphadog` in install.sh / manifests are valid. |
+| **setup-dog** | UI app (setup wizard) | **Being renamed to `setupdog`** — repo has a hyphen, convention is hyphen-less (`watchdog`, `updatedog`). Binary + Flutter package output already match the hyphen-less form (`setupdog-ui`). |
+| **watchdog-auth-minion** | Cloud helper (OAuth broker) | **Pending decision: rename to `auth-minion`?** Convention is `{role}-minion`; the `watchdog-` prefix is fleet branding that's arguably redundant given the `MicropleDev/` org namespace. Leaning toward rename. |
 | **watchdog-os** | Pi OS bundle / installer repo | Not a service or UI — meta-repo for the bundle. The `-os` suffix is clearer than `wd-os`. Leave. |
 | **dog-libs** | Shared Flutter packages umbrella | Meta-collection. Naming describes the *collection*, not the contents. Leave. |
 | **dogserver** | Shared Go module (extracted from sports-server) | Meta-collection. Leave. |
+
+> **Open question:** the WatchDog Roadmap project board lists `wd-minions` as a Component option but no matching repo appears to exist in `MicropleDev/`. Either a stale board option, a planned umbrella, or a misclassification. TODO: investigate + resolve (create / remove from board / document purpose).
 
 ## Renaming an existing repo or component
 
