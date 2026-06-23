@@ -25,7 +25,7 @@ GitHub treats a repo named `.github` specially: its `profile/README.md` is the p
 | `.github/workflows/flutter-ui-release.yml` | (planned: watchdog, setup-dog — W6 not yet migrated) | stable cuts (manual) |
 | `.github/workflows/flutter-ui-dev-release.yml` | (planned: same — W6 not yet migrated) | dev cuts (auto on push to main) |
 
-Conventions (tag scheme, signing model, cadence) live in [docs/release-scheme.md](docs/release-scheme.md).
+Conventions (tag scheme, signing model, cadence) live in [docs/release-scheme.md](docs/release-scheme.md). Repo / service / package naming rules live in [docs/naming.md](docs/naming.md).
 
 ## Why this repo exists
 
