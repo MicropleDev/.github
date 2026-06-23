@@ -1,9 +1,8 @@
 # Reusable workflow for cutting a DEV (prerelease) Flutter UI tar.zst.
 #
-# Intended for watchdog and setup-dog via their consumer-repo `push to
-# main` trigger; consumer migration is tracked as W6
-# (MicropleDev/watchdog-os#59) and has not yet landed. Per-repo wrapper
-# example:
+# Intended for watchdog, setupdog, and updatedog via their consumer-repo
+# `push to main` trigger. Consumer migration shipped as W6
+# (MicropleDev/watchdog-os#59). Per-repo wrapper example:
 #
 #   # .github/workflows/dev-release.yml in a consumer repo
 #   name: Dev Release

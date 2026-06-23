@@ -12,7 +12,7 @@ should know what kind of thing it is and roughly where it runs.
 
 | Bucket | Pattern | What it means | Examples |
 |---|---|---|---|
-| **UI app** (Flutter, user-facing) | `{verb}dog` | A Flutter app the human looks at on the Pi screen | [setupdog](https://github.com/MicropleDev/setup-dog), [watchdog](https://github.com/MicropleDev/watchdog), [updatedog](https://github.com/MicropleDev/updatedog) |
+| **UI app** (Flutter, user-facing) | `{verb}dog` | A Flutter app the human looks at on the Pi screen | [setupdog](https://github.com/MicropleDev/setupdog), [watchdog](https://github.com/MicropleDev/watchdog), [updatedog](https://github.com/MicropleDev/updatedog) |
 | **Local service** (Pi-resident, headless) | random name (see below) | A daemon running on the Pi with no UI | [heisenberg](https://github.com/MicropleDev/heisenberg), [pinkman](https://github.com/MicropleDev/pinkman), [gustavo](https://github.com/MicropleDev/AlphaDog) (formerly `alphadog`) |
 | **Cloud helper service** ("minion") | `watchdog-{role}-minion` | Cloud service that helps a device or user — auth, telemetry, broker. The `watchdog-` prefix is the fleet brand; minion-class services explicitly belong to a fleet. | watchdog-auth-minion |
 | **Cloud data service** ("server") | `{feature}-server` | Cloud service that serves user-facing feature data | [weather-server](https://github.com/MicropleDev/weather-server), [sports-server](https://github.com/MicropleDev/sports-server) |
@@ -71,12 +71,11 @@ picks come quickly. **Reuse a name only if the role genuinely differs**
 | **superdog** (+ `superdog-listener`) | Local services (LLM voice pipeline + wake-word) | Predates the convention. Deeply established — shipped binaries, install scripts, env templates, env vars in 5+ repos. Cost of rename is high for low gain. Reads as "random-ish dog name", close enough. |
 | **SoundDog** / `wd_soundcloud` | Local audio service + Flutter package | Being decommissioned (feature dropped). No rename — just goes away. |
 | **alphadog** | Local service (boot decider) | **Being renamed to `gustavo`** as a Phase 0 cleanup. Until that rename lands, refs to `alphadog` in install.sh / manifests are valid. |
-| **setup-dog** | UI app (setup wizard) | **Being renamed to `setupdog`** — repo has a hyphen, convention is hyphen-less (`watchdog`, `updatedog`). Binary + Flutter package output already match the hyphen-less form (`setupdog-ui`). |
 | **watchdog-os** | Pi OS bundle / installer repo | Not a service or UI — meta-repo for the bundle. The `-os` suffix is clearer than `wd-os`. Leave. |
 | **dog-libs** | Shared Flutter packages umbrella | Meta-collection. Naming describes the *collection*, not the contents. Leave. |
 | **dogserver** | Shared Go module (extracted from sports-server) | Meta-collection. Leave. |
 
-> **Note:** `MicropleDev/wd-minions` was created as a planned Go-services umbrella but never developed past a scaffold. Being archived; pair-minion functionality landed in heisenberg / setup-dog / watchdog-auth-minion instead. The board's `wd-minions` Component option is being removed.
+> **Note:** `MicropleDev/wd-minions` was created as a planned Go-services umbrella but never developed past a scaffold. Being archived; pair-minion functionality landed in heisenberg / setupdog / watchdog-auth-minion instead. Nine historical board items still reference the `wd-minions` Component option — all already Done; the option stays as a museum piece, not used for new work.
 
 ## Renaming an existing repo or component
 

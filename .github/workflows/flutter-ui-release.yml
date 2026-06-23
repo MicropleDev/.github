@@ -1,7 +1,7 @@
 # Reusable workflow for cutting a STABLE Flutter UI tar.zst release.
 #
-# Intended for watchdog and setup-dog; consumer-repo migration is
-# tracked as W6 (MicropleDev/watchdog-os#59) and has not yet landed.
+# Intended for watchdog, setupdog, and updatedog. Consumer-repo
+# migration shipped as W6 (MicropleDev/watchdog-os#59).
 # Per-repo wrapper example:
 #
 #   # .github/workflows/release.yml in a consumer repo
