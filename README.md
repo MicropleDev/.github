@@ -23,7 +23,7 @@ GitHub treats a repo named `.github` specially: its `profile/README.md` is the p
 | `.github/workflows/python-tarball-release.yml` | superdog, superdog-listener | stable cuts (manual) |
 | `.github/workflows/python-tarball-dev-release.yml` | same | dev cuts (auto on push to main) |
 | `.github/workflows/flutter-ui-release.yml` | watchdog, setupdog, updatedog | stable cuts (manual) |
-| `.github/workflows/flutter-ui-dev-release.yml` | (planned: same — W6 not yet migrated) | dev cuts (auto on push to main) |
+| `.github/workflows/flutter-ui-dev-release.yml` | same | dev cuts (auto on push to main) |
 
 Conventions (tag scheme, signing model, cadence) live in [docs/release-scheme.md](docs/release-scheme.md). Repo / service / package naming rules live in [docs/naming.md](docs/naming.md).
 
