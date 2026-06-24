@@ -14,7 +14,7 @@ should know what kind of thing it is and roughly where it runs.
 |---|---|---|---|
 | **UI app** (Flutter, user-facing) | `{verb}dog` | A Flutter app the human looks at on the Pi screen | [setupdog](https://github.com/MicropleDev/setupdog), [watchdog](https://github.com/MicropleDev/watchdog), [updatedog](https://github.com/MicropleDev/updatedog) |
 | **Local service** (Pi-resident, headless) | random name (see below) | A daemon running on the Pi with no UI | [heisenberg](https://github.com/MicropleDev/heisenberg), [pinkman](https://github.com/MicropleDev/pinkman), [gustavo](https://github.com/MicropleDev/gustavo) (renamed from `alphadog` in [watchdog-os#83](https://github.com/MicropleDev/watchdog-os/pull/83) + [gustavo#7](https://github.com/MicropleDev/gustavo/pull/7)) |
-| **Cloud helper service** ("minion") | `watchdog-{role}-minion` | Cloud service that helps a device or user — auth, telemetry, broker. The `watchdog-` prefix is the fleet brand; minion-class services explicitly belong to a fleet. | watchdog-auth-minion |
+| **Cloud helper service** ("minion") | `watchdog-{role}-minion` | Cloud service that helps a device or user — auth, telemetry, broker. The `watchdog-` prefix is the fleet brand; minion-class services explicitly belong to a fleet. | [watchdog-auth-minion](https://github.com/MicropleDev/watchdog-auth-minion) |
 | **Cloud data service** ("server") | `{feature}-server` | Cloud service that serves user-facing feature data | [weather-server](https://github.com/MicropleDev/weather-server), [sports-server](https://github.com/MicropleDev/sports-server) |
 | **Flutter feature package** | `wd-{feature}` | Flutter package consumed by the UI apps; one repo per feature | [wd-weather](https://github.com/MicropleDev/wd-weather), [wd-sports](https://github.com/MicropleDev/wd-sports) |
 
@@ -78,7 +78,7 @@ picks come quickly. **Reuse a name only if the role genuinely differs**
 
 ## Renaming an existing repo or component
 
-GitHub auto-redirects old URLs forever after a rename. But for hygiene:
+GitHub auto-redirects old URLs after a rename — durable in practice but not absolute (the redirect breaks if anyone, including you, later creates a new repo at the old name). Treat it as forgiving, not as a permanent guarantee, and update referrers when you can. Hygiene checklist:
 
 1. **Rename the repo** on GitHub (Settings → Repository name). 5 seconds.
 2. **`grep` all dependent repos** for the old name. Common hits: workflow
