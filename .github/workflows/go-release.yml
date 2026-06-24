@@ -1,6 +1,6 @@
 # Reusable workflow for cutting a STABLE release of a Go service.
 #
-# Used by heisenberg, weather-server, sounddog, AlphaDog. Per-repo wrapper
+# Used by heisenberg, weather-server, sports-server, gustavo. Per-repo wrapper
 # example:
 #
 #   # .github/workflows/release.yml in a consumer repo

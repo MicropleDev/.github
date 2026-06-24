@@ -13,3 +13,8 @@ Tools for the WatchDog Pi smart display — a privacy-first, friends-only, voice
 - 👂 [superdog-listener](https://github.com/MicropleDev/superdog-listener) — wake-word + ASR + TTS
 - 🥶 [gustavo](https://github.com/MicropleDev/gustavo) — boot decider (picks setupdog vs watchdog)
 - 🥧 [watchdog-os](https://github.com/MicropleDev/watchdog-os) — Pi installer + OS bundle
+
+### In development
+
+- 🔁 [updatedog](https://github.com/MicropleDev/updatedog) — OTA update progress UI (Phase 3)
+- 💉 [pinkman](https://github.com/MicropleDev/pinkman) — OTA updater agent (Phase 2)
