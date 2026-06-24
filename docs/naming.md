@@ -45,7 +45,7 @@ memorable names without "what should we call this?" overhead.
 |---|---|---|
 | heisenberg | Walter White / Heisenberg | The architect / kingpin — runs system control (WiFi, BT, brightness, volume, device identity) |
 | pinkman | Jesse Pinkman | Heisenberg's partner-in-crime / implementer — applies the bundles heisenberg's world prescribes (the OTA updater agent) |
-| gustavo | Gus Fring | The calm, methodical decider — picks which UI runs at boot (`setupdog-ui` or `watchdog-ui`); never panics, runs as root |
+| gustavo | Gus Fring | The calm, methodical decider — picks which UI runs at boot (the `setupdog` or `watchdog` repos' Flutter bundles, which install as `setupdog-ui.service` / `watchdog-ui.service`); never panics, runs as root |
 
 ### Picking names for future services
 
@@ -74,7 +74,7 @@ picks come quickly. **Reuse a name only if the role genuinely differs**
 | **dog-libs** | Shared Flutter packages umbrella | Meta-collection. Naming describes the *collection*, not the contents. Leave. |
 | **dogserver** | Shared Go module (extracted from sports-server) | Meta-collection. Leave. |
 
-> **Note:** `MicropleDev/wd-minions` was created as a planned Go-services umbrella but never developed past a scaffold. Being archived; pair-minion functionality landed in heisenberg / setupdog / watchdog-auth-minion instead. Nine historical board items still reference the `wd-minions` Component option — all already Done; the option stays as a museum piece, not used for new work.
+> **Note:** `MicropleDev/wd-minions` was created as a planned Go-services umbrella but never developed past a scaffold. Being archived; the device-pairing functionality it was meant to host landed in heisenberg / setupdog / watchdog-auth-minion instead. Nine historical board items still reference the `wd-minions` Component option — all already Done; the option stays as a museum piece, not used for new work.
 
 ## Renaming an existing repo or component
 
