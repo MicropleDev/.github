@@ -18,7 +18,7 @@ GitHub treats a repo named `.github` specially: its `profile/README.md` is the p
 
 | Workflow | Used by | Stable / dev |
 |---|---|---|
-| `.github/workflows/go-release.yml` | heisenberg, weather-server, sounddog, AlphaDog | stable cuts (manual) |
+| `.github/workflows/go-release.yml` | heisenberg, weather-server, sports-server, gustavo | stable cuts (manual) |
 | `.github/workflows/go-dev-release.yml` | same | dev cuts (auto on push to main) |
 | `.github/workflows/python-tarball-release.yml` | superdog, superdog-listener | stable cuts (manual) |
 | `.github/workflows/python-tarball-dev-release.yml` | same | dev cuts (auto on push to main) |
