@@ -1,7 +1,7 @@
 # Reusable workflow for cutting a DEV (prerelease) release of a Go service.
 #
 # Auto-invoked from each consumer repo's `push to main` trigger. Used by
-# heisenberg, weather-server, sounddog, AlphaDog. Per-repo wrapper example:
+# heisenberg, weather-server, sports-server, gustavo. Per-repo wrapper example:
 #
 #   # .github/workflows/dev-release.yml in a consumer repo
 #   name: Dev release

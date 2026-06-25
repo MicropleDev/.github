@@ -30,7 +30,7 @@ Visibility: "All repositories" (or restrict to the Go service repos). Dev cuts f
 
 Stable cuts are deliberate and infrequent; the secrets should require a human click before they're accessible.
 
-In **each consumer repo** (heisenberg, weather-server, sounddog, AlphaDog — the four Go services), under **Settings → Environments → New environment**:
+In **each consumer repo** (heisenberg, weather-server, sports-server, gustavo — the four Go services), under **Settings → Environments → New environment**:
 
 1. Name the environment `stable-release` (the consumer's wrapper passes this as the `environment` input — see below).
 2. Configure **Required reviewers** = `mavis-dev` (or whoever should approve stable cuts).
