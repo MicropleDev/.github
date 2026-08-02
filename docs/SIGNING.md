@@ -6,7 +6,7 @@ WatchDog OS release artifacts are signed with [minisign](https://jedisct1.github
 
 | Channel | Public key | Used by | Secret-key handling |
 |---|---|---|---|
-| `stable` | `manifest/keys/wdos-stable.pub` (id `01FB8B9873285A05`) | Manual stable cuts via `go-release.yml` | Source of truth: offline (1Password). Staged into a **GH Actions environment secret** on each consumer repo, under an environment with required-reviewer approval. |
+| `stable` | `manifest/keys/wdos-stable.pub` (id `3A77F5DD20A6A5C2`) | Manual stable cuts via `go-release.yml` | Source of truth: offline (1Password). Staged as `WDOS_STABLE_MINISIGN_KEY`/`_PASSWORD` (org-level, or per-repo `stable-release` environment secrets). Rotated 2026-08-02 (prev `01FB8B9873285A05`, password lost; old key never used in production). |
 | `dev` | `manifest/keys/wdos-dev.pub` (id `0A08F649ED6E0F74`) | Auto dev cuts on push to main via `go-dev-release.yml` | **Org-level GH Actions secret** — visible to every org repo, no gating. |
 
 The Pi-side OTA agent (`wd-updater`, Phase 2 of the OTA epic) accepts **only** the signature whose key matches the Pi's configured channel. A compromised dev key cannot ship a fake stable.
