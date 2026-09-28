@@ -2,14 +2,19 @@
 
 WatchDog OS release artifacts are signed with [minisign](https://jedisct1.github.io/minisign/) (Ed25519). Public keys are committed to [`MicropleDev/watchdog-os/manifest/keys/`](https://github.com/MicropleDev/watchdog-os/tree/main/manifest/keys); secret keys live in the storage locations described below.
 
-## Two-key model
+## Keys: one signing key per channel, a trusted key SET per channel
 
-| Channel | Public key | Used by | Secret-key handling |
-|---|---|---|---|
-| `stable` | `manifest/keys/wdos-stable.pub` (id `3A77F5DD20A6A5C2`) | Manual stable cuts via `go-release.yml` | Source of truth: offline (1Password). Staged as `WDOS_STABLE_MINISIGN_KEY`/`_PASSWORD` (org-level, or per-repo `stable-release` environment secrets). Rotated 2026-08-02 (prev `01FB8B9873285A05`, password lost; old key never used in production). |
-| `dev` | `manifest/keys/wdos-dev.pub` (id `0A08F649ED6E0F74`) | Auto dev cuts on push to main via `go-dev-release.yml` | **Org-level GH Actions secret** — visible to every org repo, no gating. |
+CI signs each channel with **one** key: the org secret for that channel. Devices trust an ordered **set** of keys per channel (MicropleDev/pinkman#47): the primary, an offline standby and, during a transition, a retiring key. The full inventory and the rotation runbook are in [`watchdog-os/manifest/keys/README.md`](https://github.com/MicropleDev/watchdog-os/blob/main/manifest/keys/README.md). That file is the source of truth; this table only summarises it.
 
-The Pi-side OTA agent (`wd-updater`, Phase 2 of the OTA epic) accepts **only** the signature whose key matches the Pi's configured channel. A compromised dev key cannot ship a fake stable.
+| Channel | Key (file in `manifest/keys/`) | Id | Role | Secret |
+|---|---|---|---|---|
+| `stable` | `wdos-stable.pub` | `3A77F5DD20A6A5C2` | primary: signs manual stable cuts via `go-release.yml` | Apple Passwords, group "Microple Keys". Staged as `WDOS_STABLE_MINISIGN_KEY`/`_PASSWORD`. Rotated 2026-08-02 (prev `01FB8B9873285A05`, password lost; never used in production). |
+| `stable` | `wdos-stable-standby.pub` | `FCE32A819F5618B3` | standby | Apple Passwords only. Never a GitHub secret. |
+| `dev` | `wdos-dev.pub` | `6C6B47171265AD45` | primary: takes over signing when the transition switches the org secret | Apple Passwords, entry "WDOS minisign wdos-dev". |
+| `dev` | `wdos-dev-standby.pub` | `6E8DA2A7D50BCAC3` | standby | Apple Passwords only. Never a GitHub secret. |
+| `dev` | `wdos-dev-legacy.pub` | `0A08F649ED6E0F74` | **retiring**: CI signs every dev cut with it today | Org secret `WDOS_DEV_MINISIGN_KEY`/`_PASSWORD` **only**. No offline copy. |
+
+The Pi-side OTA agent (`wd-updater`) compiles these sets in. It accepts a signature only from a key in the **device's own channel** set, choosing the key by the signature's key id, and fails closed on anything else. The sets are disjoint, so a compromised dev key (primary, standby or retiring) cannot ship a fake stable. A standby protects against a **lost** secret, not a **leaked** one: a leaked key stays trusted until an agent without it reaches every device.
 
 ## Secret storage details
 
@@ -21,8 +26,8 @@ Add at **Org Settings → Secrets and variables → Actions** on the `MicropleDe
 
 | Name | Value |
 |---|---|
-| `WDOS_DEV_MINISIGN_KEY` | full text of `wdos-dev.key` (run `cat wdos-dev.key`) |
-| `WDOS_DEV_MINISIGN_PASSWORD` | password chosen at key-gen time |
+| `WDOS_DEV_MINISIGN_KEY` | full secret-key text of the dev signing key. **Today** it holds the retiring `0A08F649ED6E0F74`, which exists only here. After the pinkman#47 switch it holds `6C6B47171265AD45`: the Notes of Apple Passwords entry "WDOS minisign wdos-dev". This one org secret signs every repo's dev cut, not only bundles. |
+| `WDOS_DEV_MINISIGN_PASSWORD` | that key's passphrase (after the switch: the Password of the same entry) |
 
 Visibility: "All repositories" (or restrict to the Go service repos). Dev cuts fire on every push to main — gating them would defeat the auto-cadence.
 
@@ -38,8 +43,8 @@ In **each consumer repo** (heisenberg, weather-server, sports-server, gustavo �
 
 | Name | Value |
 |---|---|
-| `WDOS_STABLE_MINISIGN_KEY` | full text of `wdos-stable.key` (from 1Password attachment) |
-| `WDOS_STABLE_MINISIGN_PASSWORD` | password chosen at key-gen time |
+| `WDOS_STABLE_MINISIGN_KEY` | full secret-key text of `wdos-stable` (Notes of its Apple Passwords entry, "Microple Keys") |
+| `WDOS_STABLE_MINISIGN_PASSWORD` | its passphrase (Password of the same entry) |
 
 The secrets are now unreachable to any workflow run until the configured reviewer clicks "Approve and deploy" on the pending run. The reusable `go-release.yml` workflow accepts `environment` as an input — when the caller passes `environment: stable-release`, GH applies that environment to the signing job, and the gating fires.
 
@@ -94,32 +99,36 @@ If `secrets: inherit` is omitted, the sign step fails fast with a clear error po
 
 ## Verifying a signed release
 
-Once a signed bundle exists, anyone with the repo checked out can verify:
+`minisign -V` takes one public key. Try the **channel's** keys in turn. The signature names its key id, so exactly one key can match:
 
 ```bash
-# minisign expects the signature alongside the file (<file>.minisig); use -x to
-# point elsewhere
-minisign -Vm watchdog-bundle-0.1.0.tar.zst -p manifest/keys/wdos-stable.pub
-minisign -Vm watchdog-bundle-0.1.1-dev.20260618.abc1234.tar.zst -p manifest/keys/wdos-dev.pub
+# minisign expects the signature alongside the file (<file>.minisig); use -x to point elsewhere
+f=watchdog-bundle-0.1.1-dev.20260618.abc1234.tar.zst
+for k in manifest/keys/wdos-dev*.pub; do        # stable artifact: loop over manifest/keys/wdos-stable*.pub the same way
+  minisign -Vm "$f" -p "$k" -q && echo "verified by $k" && break
+done
 ```
 
-Exit 0 → signature valid. Non-zero → reject.
+If nothing prints "verified by", reject the artifact.
+
+To check what a **shipped** `wd-updater` trusts, run `wd-updater --version` on the device. It prints one `trusted keys <channel>: …` line per channel. From a host, run `strings wd-updater-*-linux-arm64 | grep -o 'minisign public key [0-9A-F]*'`.
 
 ## Key rotation
 
-If a key is suspected compromised:
+The executable procedures live in [`watchdog-os/manifest/keys/README.md`](https://github.com/MicropleDev/watchdog-os/blob/main/manifest/keys/README.md#key-procedures): planned rotation, lost secret (sign with the standby) and leaked secret. The one rule every procedure follows: **the bundle that delivers a new trust set is verified by the old set.** So:
 
-1. Generate a replacement on a trusted offline machine: `minisign -G -p NEW.pub -s NEW.key`.
-2. Commit the new `.pub` next to the existing one (don't delete the old yet) in `watchdog-os/manifest/keys/`.
-3. Update the Pi provisioning script to bake **both** old and new public keys into `/etc/wd-updater/trusted-keys/`.
-4. Push an OTA bundle that includes the new keys → wait until the fleet has it.
-5. Rotate the Actions secret(s) to the new key.
-6. Once you've confirmed the fleet has the new key, push another bundle that **drops** the old `.pub`. Old key is now untrusted by the fleet.
+1. Add the new `.pub` to pinkman `pkg/trust/keys/` (with its trust-set slot) **and** to `watchdog-os/manifest/keys/`, byte-identical. Pinkman goes first; watchdog-os's `trust-keys` workflow checks the parity.
+2. Ship that `wd-updater`, signed with a key devices **already** trust. Confirm `wd-updater --version` on every device. Then commit one more bundle on top, so the rollback target also carries the new set.
+3. Only then point the channel's Actions secret at the new key. Switching the secret before step 2 is confirmed makes every device on an older agent reject every update, including the one that would fix it. Those devices can then only be recovered by reflashing.
+4. Drop the retired key from both repos in a later release.
 
-The composite action itself is key-agnostic — it just takes whatever `key`/`password` inputs you pass.
+There is no `/etc/wd-updater/trusted-keys/` directory and no provisioning-time key file. Keys are compiled into `wd-updater`.
+
+The composite action itself is key-agnostic. It takes whatever `key`/`password` inputs you pass.
 
 ## Related issues
 
+- [pinkman#47](https://github.com/MicropleDev/pinkman/issues/47) — multi-key trust per channel (standby keys, dev key transition)
 - [watchdog-os#60](https://github.com/MicropleDev/watchdog-os/issues/60) — W7 (composite action + key policy)
 - [watchdog-os#61](https://github.com/MicropleDev/watchdog-os/issues/61) — W8 (wire signing into all release workflows)
 - [watchdog-os#52](https://github.com/MicropleDev/watchdog-os/issues/52) — OTA epic
