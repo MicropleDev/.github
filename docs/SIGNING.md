@@ -26,8 +26,8 @@ Add at **Org Settings → Secrets and variables → Actions** on the `MicropleDe
 
 | Name | Value |
 |---|---|
-| `WDOS_DEV_MINISIGN_KEY` | full secret-key text of the channel's signing key: the Notes of its Apple Passwords entry (during the pinkman#47 transition this is still the retiring `0A08F649ED6E0F74`, which has no offline copy) |
-| `WDOS_DEV_MINISIGN_PASSWORD` | that key's passphrase: the Password of the same entry |
+| `WDOS_DEV_MINISIGN_KEY` | full secret-key text of the dev signing key. **Today** it holds the retiring `0A08F649ED6E0F74`, which exists only here. After the pinkman#47 switch it holds `6C6B47171265AD45`: the Notes of Apple Passwords entry "WDOS minisign wdos-dev". This one org secret signs every repo's dev cut, not only bundles. |
+| `WDOS_DEV_MINISIGN_PASSWORD` | that key's passphrase (after the switch: the Password of the same entry) |
 
 Visibility: "All repositories" (or restrict to the Go service repos). Dev cuts fire on every push to main — gating them would defeat the auto-cadence.
 
@@ -104,7 +104,7 @@ If `secrets: inherit` is omitted, the sign step fails fast with a clear error po
 ```bash
 # minisign expects the signature alongside the file (<file>.minisig); use -x to point elsewhere
 f=watchdog-bundle-0.1.1-dev.20260618.abc1234.tar.zst
-for k in manifest/keys/wdos-dev*.pub; do        # stable artifact: manifest/keys/wdos-stable*.pub
+for k in manifest/keys/wdos-dev*.pub; do        # stable artifact: loop over manifest/keys/wdos-stable*.pub the same way
   minisign -Vm "$f" -p "$k" -q && echo "verified by $k" && break
 done
 ```
@@ -118,7 +118,7 @@ To check what a **shipped** `wd-updater` trusts, run `wd-updater --version` on t
 The executable procedures live in [`watchdog-os/manifest/keys/README.md`](https://github.com/MicropleDev/watchdog-os/blob/main/manifest/keys/README.md#key-procedures): planned rotation, lost secret (sign with the standby) and leaked secret. The one rule every procedure follows: **the bundle that delivers a new trust set is verified by the old set.** So:
 
 1. Add the new `.pub` to pinkman `pkg/trust/keys/` (with its trust-set slot) **and** to `watchdog-os/manifest/keys/`, byte-identical. Pinkman goes first; watchdog-os's `trust-keys` workflow checks the parity.
-2. Ship that `wd-updater`, signed with a key devices **already** trust. Confirm `wd-updater --version` on every device.
+2. Ship that `wd-updater`, signed with a key devices **already** trust. Confirm `wd-updater --version` on every device. Then commit one more bundle on top, so the rollback target also carries the new set.
 3. Only then point the channel's Actions secret at the new key. Switching the secret before step 2 is confirmed makes every device on an older agent reject every update, including the one that would fix it. Those devices can then only be recovered by reflashing.
 4. Drop the retired key from both repos in a later release.
 
@@ -129,7 +129,6 @@ The composite action itself is key-agnostic. It takes whatever `key`/`password` 
 ## Related issues
 
 - [pinkman#47](https://github.com/MicropleDev/pinkman/issues/47) — multi-key trust per channel (standby keys, dev key transition)
-
 - [watchdog-os#60](https://github.com/MicropleDev/watchdog-os/issues/60) — W7 (composite action + key policy)
 - [watchdog-os#61](https://github.com/MicropleDev/watchdog-os/issues/61) — W8 (wire signing into all release workflows)
 - [watchdog-os#52](https://github.com/MicropleDev/watchdog-os/issues/52) — OTA epic
