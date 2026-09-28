@@ -26,7 +26,7 @@ Stable cadence is naturally slow (weeks/months); automating it adds risk without
 
 ## Signing
 
-- One signing key per channel in CI: stable (`WDOS_STABLE_MINISIGN_KEY`/`_PASSWORD`, ideally environment-protected) and dev (`WDOS_DEV_MINISIGN_KEY`/`_PASSWORD`). Secrets' source of truth is Apple Passwords ("Microple Keys"), except the retiring dev key `0A08F649ED6E0F74`, which exists only as the org secret. Devices trust a key **set** per channel (primary + offline standby, plus a retiring key during a transition), compiled into `wd-updater`. See [`SIGNING.md`](SIGNING.md).
+- One signing key per channel in CI: stable (`WDOS_STABLE_MINISIGN_KEY`/`_PASSWORD`, ideally environment-protected) and dev (`WDOS_DEV_MINISIGN_KEY`/`_PASSWORD`). Secrets' source of truth is Apple Passwords ("Microple Keys"); the dev org secret holds `6C6B47171265AD45` since 2026-09-28 (the original `0A08F649ED6E0F74` is retired). Devices trust a key **set** per channel (primary + offline standby, plus a retiring key during a transition), compiled into `wd-updater`. See [`SIGNING.md`](SIGNING.md).
 - Public keys committed at [MicropleDev/watchdog-os/manifest/keys/](https://github.com/MicropleDev/watchdog-os/tree/main/manifest/keys).
 - Every release workflow signs via the [`actions/minisign-sign`](../.github/actions/minisign-sign/action.yml) composite action — produces `{asset}.minisig` alongside `{asset}.sha256`.
 - Consumer wrappers must include `secrets: inherit` so the secrets pass through to the reusable workflow.
