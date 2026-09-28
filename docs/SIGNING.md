@@ -10,11 +10,12 @@ CI signs each channel with **one** key: the org secret for that channel. Devices
 |---|---|---|---|---|
 | `stable` | `wdos-stable.pub` | `3A77F5DD20A6A5C2` | primary: signs manual stable cuts via `go-release.yml` | Apple Passwords, group "Microple Keys". Staged as `WDOS_STABLE_MINISIGN_KEY`/`_PASSWORD`. Rotated 2026-08-02 (prev `01FB8B9873285A05`, password lost; never used in production). |
 | `stable` | `wdos-stable-standby.pub` | `FCE32A819F5618B3` | standby | Apple Passwords only. Never a GitHub secret. |
-| `dev` | `wdos-dev.pub` | `6C6B47171265AD45` | primary: takes over signing when the transition switches the org secret | Apple Passwords, entry "WDOS minisign wdos-dev". |
+| `dev` | `wdos-dev.pub` | `6C6B47171265AD45` | primary: CI signs every dev cut with it (since 2026-09-28; first bundle `v0.1.3-dev.20260928.49e7ed0.r3`) | Apple Passwords, entry "WDOS minisign wdos-dev". Staged as org secret `WDOS_DEV_MINISIGN_KEY`/`_PASSWORD`. |
 | `dev` | `wdos-dev-standby.pub` | `6E8DA2A7D50BCAC3` | standby | Apple Passwords only. Never a GitHub secret. |
-| `dev` | `wdos-dev-legacy.pub` | `0A08F649ED6E0F74` | **retiring**: CI signs every dev cut with it today | Org secret `WDOS_DEV_MINISIGN_KEY`/`_PASSWORD` **only**. No offline copy. |
 
-The Pi-side OTA agent (`wd-updater`) compiles these sets in. It accepts a signature only from a key in the **device's own channel** set, choosing the key by the signature's key id, and fails closed on anything else. The sets are disjoint, so a compromised dev key (primary, standby or retiring) cannot ship a fake stable. A standby protects against a **lost** secret, not a **leaked** one: a leaked key stays trusted until an agent without it reaches every device.
+The Pi-side OTA agent (`wd-updater`) compiles these sets in. It accepts a signature only from a key in the **device's own channel** set, choosing the key by the signature's key id, and fails closed on anything else. The sets are disjoint, so a compromised dev key (primary or standby) cannot ship a fake stable.
+
+**Retired:** `0A08F649ED6E0F74`, the original dev key (file `wdos-dev-legacy.pub`, no offline copy), retired 2026-09-28 (MicropleDev/pinkman#47 step 4). It signed every dev cut up to bundle `v0.1.3-dev.20260928.49e7ed0.r2`; an agent built after the retirement refuses anything it signed. Its public key is kept in the watchdog-os inventory's "Retired keys" table for hand-verifying old artifacts. A standby protects against a **lost** secret, not a **leaked** one: a leaked key stays trusted until an agent without it reaches every device.
 
 ## Secret storage details
 
@@ -26,8 +27,8 @@ Add at **Org Settings → Secrets and variables → Actions** on the `MicropleDe
 
 | Name | Value |
 |---|---|
-| `WDOS_DEV_MINISIGN_KEY` | full secret-key text of the dev signing key. **Today** it holds the retiring `0A08F649ED6E0F74`, which exists only here. After the pinkman#47 switch it holds `6C6B47171265AD45`: the Notes of Apple Passwords entry "WDOS minisign wdos-dev". This one org secret signs every repo's dev cut, not only bundles. |
-| `WDOS_DEV_MINISIGN_PASSWORD` | that key's passphrase (after the switch: the Password of the same entry) |
+| `WDOS_DEV_MINISIGN_KEY` | full secret-key text of the dev signing key, `6C6B47171265AD45` since 2026-09-28: the Notes of Apple Passwords entry "WDOS minisign wdos-dev". This one org secret signs every repo's dev cut, not only bundles. |
+| `WDOS_DEV_MINISIGN_PASSWORD` | that key's passphrase: the Password of the same entry |
 
 Visibility: "All repositories" (or restrict to the Go service repos). Dev cuts fire on every push to main — gating them would defeat the auto-cadence.
 
