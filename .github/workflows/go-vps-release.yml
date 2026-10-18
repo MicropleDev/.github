@@ -23,6 +23,9 @@
 #   concurrency:
 #     group: release
 #     cancel-in-progress: false
+#   permissions:
+#     contents: write   # tag + release
+#     actions: write    # dispatch deploy.yml (see deploy_workflow)
 #   jobs:
 #     release:
 #       uses: MicropleDev/.github/.github/workflows/go-vps-release.yml@main
@@ -38,8 +41,12 @@
 #   - Asset: {binary_name}-{version}-linux-amd64 + {asset}.sha256.
 #   - prerelease: false.
 #   - Version embedded via ldflags into {version_pkg}.Version / GitCommit / BuildDate.
-#   - The consumer's deploy.yml triggers on `v*.*.*` tags, so pushing the
-#     tag here deploys; rollback = re-run that deploy with an earlier tag.
+#   - Deploy is DISPATCHED, not tag-triggered: the tag is pushed with
+#     GITHUB_TOKEN, and GitHub never starts push-triggered workflows for
+#     events made with that token, so a consumer's `on: push: tags:`
+#     would stay silent. After the release is published this workflow
+#     runs `gh workflow run <deploy_workflow> --ref <tag>` instead.
+#     Rollback = run that deploy workflow by hand with an earlier tag.
 
 name: Go VPS service release (stable)
 
@@ -62,11 +69,16 @@ on:
         description: "Semver bump applied to the latest v{x.y.z} tag: patch | minor | major."
         required: true
         type: string
-      go_private:
-        description: "GOPRIVATE value; also the one module the App token is scoped to."
+      private_repo:
+        description: "The one private MicropleDev repo this build fetches as a Go module (the App token is scoped to it, read-only)."
         required: false
         type: string
-        default: github.com/MicropleDev/dogserver
+        default: dogserver
+      deploy_workflow:
+        description: "Workflow file in the caller repo to dispatch with ref=<tag> after the release is published (needs actions: write). Empty = do not deploy."
+        required: false
+        type: string
+        default: deploy.yml
     outputs:
       version:
         description: "Computed version without the 'v' prefix (e.g. '0.2.0')."
@@ -77,6 +89,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 # One stable cut per (repo, ref) at a time; never cancel one in flight —
 # it may already have pushed the tag.
@@ -85,7 +98,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GOPRIVATE: ${{ inputs.go_private }}
+  GOPRIVATE: github.com/MicropleDev/${{ inputs.private_repo }}
 
 jobs:
   release:
@@ -131,12 +144,17 @@ jobs:
           app-id: ${{ secrets.WEATHER_APP_ID }}
           private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
           owner: MicropleDev
+          # Least privilege: one repository, contents read. The git
+          # rewrite below only decides where the token is sent; this is
+          # what bounds what it can do if it leaks.
+          repositories: ${{ inputs.private_repo }}
+          permission-contents: read
 
       - name: Configure Git for the private module
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config --global url."https://x-access-token:${GH_TOKEN}@${{ inputs.go_private }}".insteadOf "https://${{ inputs.go_private }}"
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/MicropleDev/${{ inputs.private_repo }}".insteadOf "https://github.com/MicropleDev/${{ inputs.private_repo }}"
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -231,3 +249,19 @@ jobs:
           files: |
             dist/${{ steps.build.outputs.asset }}
             dist/${{ steps.build.outputs.asset }}.sha256
+
+      # A tag pushed with GITHUB_TOKEN does not start push-triggered
+      # workflows, so the consumer's deploy is started here, by name, at
+      # the tag. Runs only after the release exists, so a deploy always
+      # points at a published, downloadable version.
+      - name: Dispatch deploy at the new tag
+        if: ${{ inputs.deploy_workflow != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run "${{ inputs.deploy_workflow }}" \
+            --repo "${{ github.repository }}" \
+            --ref "${{ steps.version.outputs.tag }}" \
+            -f ref="${{ steps.version.outputs.tag }}"
+          echo "Dispatched ${{ inputs.deploy_workflow }} at ${{ steps.version.outputs.tag }}"

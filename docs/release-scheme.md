@@ -48,8 +48,9 @@ podcast-server, weather-server and sports-server run on the Hostinger VPS as sta
 
 - **amd64, not arm64.** weather-server once shipped arm64 release assets from a Pi-era wrapper; nothing consumed them, which is how it went unnoticed.
 - **No minisign.** The OTA bundle is verified on the device, so it is signed. A VPS binary is built by CI and copied over SSH by the repo's own `deploy.yml`; there is no verifier on the far end, so a signature would be ceremony. `.sha256` is kept for provenance.
-- **Stable only.** A release exists for rollback and provenance: the tag triggers the repo's `deploy.yml`, and rolling back is re-running that deploy with an earlier tag. There is no dev lane.
-- **Private module via the org App.** Both workflows mint a token from `WEATHER_APP_ID` / `WEATHER_APP_PRIVATE_KEY` and rewrite git auth for exactly one module (`go_private`, default dogserver), so callers must pass `secrets: inherit`.
+- **Stable only.** A release exists for rollback and provenance. There is no dev lane.
+- **Deploy is dispatched, not tag-triggered.** The release pushes its tag with `GITHUB_TOKEN`, and GitHub never starts push-triggered workflows for events made with that token, so an `on: push: tags:` deploy would stay silent. The release workflow therefore runs `gh workflow run <deploy_workflow> --ref <tag>` (default `deploy.yml`, passing `ref=<tag>` as an input) after the release is published; the caller grants `actions: write`. Rolling back is running that deploy workflow by hand with an earlier tag.
+- **Private module via the org App, least privilege.** Both workflows mint a token from `WEATHER_APP_ID` / `WEATHER_APP_PRIVATE_KEY` scoped to one repository (`private_repo`, default `dogserver`) with `contents: read`, and rewrite git auth for that module only, so callers must pass `secrets: inherit`.
 
 The deploy half stays per repo: host, path, user and the root activation wrapper differ, and a deploy must never touch a file another service owns.
 
