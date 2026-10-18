@@ -37,9 +37,21 @@ Stable cadence is naturally slow (weeks/months); automating it adds risk without
 | Type | Stable example | Dev example |
 |---|---|---|
 | Go binary | `heisenberg-0.1.0-linux-arm64` + `.sha256` + `.minisig` | `heisenberg-0.1.1-dev.20260618.abc1234-linux-arm64` + sidecars |
+| Go VPS binary | `podcast-server-0.2.0-linux-amd64` + `.sha256` (no `.minisig`, see below) | none — VPS services cut stable only |
 | Python tarball | `superdog-0.2.0.tar.zst` + `.sha256` + `.minisig` | same with dev version |
 | Flutter UI tarball (W5) | `watchdog-ui-0.1.0.tar.zst` + `.sha256` + `.minisig` | same |
 | watchdog-os bundle | `watchdog-bundle-0.1.0.tar.zst` + `.sha256` + `.minisig` + `manifest.json` | same |
+
+## VPS Go services (`go-vps-ci.yml`, `go-vps-release.yml`)
+
+podcast-server, weather-server and sports-server run on the Hostinger VPS as static linux/amd64 binaries under systemd behind Caddy, not on a Pi. They share the two `go-vps-*` reusable workflows and differ from the OTA lane on purpose:
+
+- **amd64, not arm64.** weather-server once shipped arm64 release assets from a Pi-era wrapper; nothing consumed them, which is how it went unnoticed.
+- **No minisign.** The OTA bundle is verified on the device, so it is signed. A VPS binary is built by CI and copied over SSH by the repo's own `deploy.yml`; there is no verifier on the far end, so a signature would be ceremony. `.sha256` is kept for provenance.
+- **Stable only.** A release exists for rollback and provenance: the tag triggers the repo's `deploy.yml`, and rolling back is re-running that deploy with an earlier tag. There is no dev lane.
+- **Private module via the org App.** Both workflows mint a token from `WEATHER_APP_ID` / `WEATHER_APP_PRIVATE_KEY` and rewrite git auth for exactly one module (`go_private`, default dogserver), so callers must pass `secrets: inherit`.
+
+The deploy half stays per repo: host, path, user and the root activation wrapper differ, and a deploy must never touch a file another service owns.
 
 ## Python `scripts/build-bundle.sh` contract
 
