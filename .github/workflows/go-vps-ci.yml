@@ -1,0 +1,138 @@
+# Reusable CI for the VPS Go services (podcast-server, weather-server,
+# sports-server): lint, vet, race tests, build. Linux/amd64 only — these
+# binaries run on the Hostinger box, not on a Pi.
+#
+# Per-repo wrapper:
+#
+#   # .github/workflows/ci.yml in a consumer repo
+#   name: CI
+#   on:
+#     pull_request:
+#       branches: [main]
+#       paths-ignore: ['**.md', 'docs/**', '.gitignore']
+#     push:
+#       branches: [main]
+#       paths-ignore: ['**.md', 'docs/**', '.gitignore']
+#   concurrency:
+#     group: ${{ github.workflow }}-${{ github.ref }}
+#     cancel-in-progress: true
+#   jobs:
+#     ci:
+#       uses: MicropleDev/.github/.github/workflows/go-vps-ci.yml@main
+#       secrets: inherit
+#
+# `secrets: inherit` is required: the private dogserver module is
+# fetched with the org GitHub App (WEATHER_APP_ID / WEATHER_APP_PRIVATE_KEY,
+# `contents: read` on MicropleDev/dogserver). The git rewrite is scoped to
+# that one module so GOPROXY + the checksum DB keep verifying every other
+# dependency, and so the workflow's own git identity is not hijacked
+# (weather-server #21).
+
+name: Go VPS service CI
+
+on:
+  workflow_call:
+    inputs:
+      private_repo:
+        description: "The one private MicropleDev repo this build fetches as a Go module (the App token is scoped to it, read-only)."
+        required: false
+        type: string
+        default: dogserver
+      golangci_version:
+        description: "golangci-lint version to run (v2 config)."
+        required: false
+        type: string
+        default: v2.9.0
+      lint:
+        description: "Run golangci-lint. Set false only for a repo that has no .golangci.yml yet."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  GOPRIVATE: github.com/MicropleDev/${{ inputs.private_repo }}
+
+jobs:
+  lint:
+    name: Lint
+    if: ${{ inputs.lint }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.WEATHER_APP_ID }}
+          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          owner: MicropleDev
+          # Least privilege: one repository, contents read. The git
+          # rewrite below only decides where the token is sent; this is
+          # what bounds what it can do if it leaks.
+          repositories: ${{ inputs.private_repo }}
+          permission-contents: read
+
+      - name: Configure Git for the private module
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/MicropleDev/${{ inputs.private_repo }}".insteadOf "https://github.com/MicropleDev/${{ inputs.private_repo }}"
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
+        with:
+          version: ${{ inputs.golangci_version }}
+          args: --timeout=5m
+
+  test:
+    name: Test + build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.WEATHER_APP_ID }}
+          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          owner: MicropleDev
+          # Least privilege: one repository, contents read. The git
+          # rewrite below only decides where the token is sent; this is
+          # what bounds what it can do if it leaks.
+          repositories: ${{ inputs.private_repo }}
+          permission-contents: read
+
+      - name: Configure Git for the private module
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/MicropleDev/${{ inputs.private_repo }}".insteadOf "https://github.com/MicropleDev/${{ inputs.private_repo }}"
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race + coverage)
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Build (linux/amd64, static)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
