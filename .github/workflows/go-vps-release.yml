@@ -230,6 +230,7 @@ jobs:
           else
             CHANGES=$(git log "${PREV}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
           fi
+          DEPLOY="${{ inputs.deploy_workflow }}"
           {
             echo "## What's changed"
             echo ""
@@ -237,8 +238,12 @@ jobs:
             echo ""
             echo "## Deploy / rollback"
             echo ""
-            echo "Pushing this tag triggers the repo's **Deploy to VPS** workflow (linux/amd64)."
-            echo "To roll back: re-run **Deploy to VPS** with \`ref\` set to an earlier tag."
+            if [ -n "$DEPLOY" ]; then
+              echo "This release dispatched \`$DEPLOY\` at \`${{ steps.version.outputs.tag }}\` (linux/amd64)."
+              echo "To roll back: run \`$DEPLOY\` by hand with \`ref\` set to an earlier tag."
+            else
+              echo "No deploy workflow is configured for this release; deploy it by hand."
+            fi
           } > release_notes.md
 
       - name: Publish GitHub Release
