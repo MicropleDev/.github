@@ -114,10 +114,13 @@ jobs:
             *) echo "::error::bump_type must be patch|minor|major, got '${{ inputs.bump_type }}'"; exit 1 ;;
           esac
 
-      - name: Validate branch is main
+      # Full ref, not ref_name: a workflow_dispatch can target a tag, and a
+      # tag named "main" would pass a ref_name check while pointing at a
+      # commit that is not on the branch.
+      - name: Validate ref is the main branch
         run: |
-          if [[ "${{ github.ref_name }}" != "main" ]]; then
-            echo "::error::Releases can only be cut from main (got ${{ github.ref_name }})"
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "::error::Releases can only be cut from the main branch (got ${{ github.ref }})"
             exit 1
           fi
 
