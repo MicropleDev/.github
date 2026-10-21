@@ -183,9 +183,14 @@ jobs:
           gzip -t "$NAME" || { echo "::error::${NAME} is not a sound gzip."; exit 1; }
           command -v sqlite3 >/dev/null || sudo apt-get install -y -qq sqlite3 >/dev/null
           gunzip -c "$NAME" > restored.db
+          # SQLite treats an empty file as an empty database and says "ok" to
+          # it, so check the bytes first: the 16-byte header, then real tables.
+          [ -s restored.db ] || { echo "::error::${NAME} decompresses to an empty file — not a backup."; exit 1; }
+          [ "$(head -c 15 restored.db)" = "SQLite format 3" ] || { echo "::error::${NAME} does not decompress to a SQLite database (bad header)."; exit 1; }
           ok="$(sqlite3 restored.db 'PRAGMA integrity_check;' | head -1)"
           [ "$ok" = "ok" ] || { echo "::error::PRAGMA integrity_check on the restored ${NAME} says: ${ok}"; exit 1; }
           tables="$(sqlite3 restored.db "select count(*) from sqlite_master where type='table'")"
+          [ "${tables:-0}" -gt 0 ] || { echo "::error::${NAME} restores to a database with no tables — the service's schema is missing."; exit 1; }
           rm -f restored.db
           {
             echo "## ${SERVICE} backup pulled"
