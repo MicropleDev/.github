@@ -1,0 +1,203 @@
+# Reusable workflow: pull a VPS Go service's newest SQLite backup off the
+# box into a GitHub Actions artifact (OPS-04, MicropleDev/watchdog-os#344).
+#
+# The box makes the backup (each service's deploy/backup.sh on a systemd
+# timer: `sqlite3 .backup` → gzip + sha256 sidecar under
+# /var/backups/<service>/daily, 7 daily + 4 weekly kept). That alone is not
+# off-box: a dead disk takes the backups with the data. This pulls the
+# newest daily as the same `deploy` user the deploy workflow uses, verifies
+# it on the runner, and stores it as an artifact of this private repo
+# (encrypted at rest, kept `retention_days`), so a restore on a fresh box
+# starts from Actions → the latest green run → download.
+#
+# What it asserts (each a named failure, so a quiet gap cannot look green):
+#   - the newest backup is younger than `max_age_hours` — the timer ran;
+#   - its sha256 sidecar matches on the box AND after the copy;
+#   - the gzip is sound and `PRAGMA integrity_check` on the restored file
+#     says ok — what is stored is restorable, not just present.
+#
+# Per-repo wrapper:
+#
+#   # .github/workflows/backup.yml in a consumer repo
+#   name: Backup pull
+#   on:
+#     schedule:
+#       - cron: "47 4 * * *"      # after the box's 03:xx backup
+#     workflow_dispatch:
+#   permissions:
+#     contents: read
+#   jobs:
+#     pull:
+#       uses: MicropleDev/.github/.github/workflows/vps-backup-pull.yml@main
+#       with:
+#         service: podcast-server
+#       secrets: inherit           # VPS_HOST + VPS_SSH_KEY, the deploy pair
+#
+# Nothing here prints the host: it is a secret, and ssh/scp diagnostics
+# that would name it go to the masked log only.
+
+name: VPS SQLite backup pull
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service name, e.g. podcast-server — names the backup dir, the file prefix and the artifact."
+        required: true
+        type: string
+      backup_dir:
+        description: "Backup root on the box. Default /var/backups/<service>."
+        required: false
+        type: string
+        default: ""
+      max_age_hours:
+        description: "Fail when the newest daily backup is older than this (the box's timer did not run)."
+        required: false
+        type: number
+        default: 26
+      retention_days:
+        description: "How long GitHub keeps the artifact."
+        required: false
+        type: number
+        default: 90
+      vps_user:
+        description: "SSH user on the box; must be able to read the backup dir (group deploy, see the service's deploy/README)."
+        required: false
+        type: string
+        default: deploy
+    secrets:
+      VPS_HOST:
+        required: true
+      VPS_SSH_KEY:
+        required: true
+      VPS_KNOWN_HOSTS:
+        required: false
+
+jobs:
+  pull:
+    name: Pull ${{ inputs.service }} backup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SERVICE: ${{ inputs.service }}
+      BACKUP_DIR: ${{ inputs.backup_dir != '' && inputs.backup_dir || format('/var/backups/{0}', inputs.service) }}
+      MAX_AGE_HOURS: ${{ inputs.max_age_hours }}
+      VPS_USER: ${{ inputs.vps_user }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            *[!a-z0-9-]*|"") echo "::error::service must be [a-z0-9-]+, got '$SERVICE'"; exit 1 ;;
+          esac
+          case "$BACKUP_DIR" in
+            /*) ;;
+            *) echo "::error::backup_dir must be absolute, got '$BACKUP_DIR'"; exit 1 ;;
+          esac
+          case "$MAX_AGE_HOURS" in
+            ''|*[!0-9]*) echo "::error::max_age_hours must be a whole number of hours, got '$MAX_AGE_HOURS'"; exit 1 ;;
+          esac
+
+      - name: Install SSH key + host key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VPS_SSH_KEY:-}" ] || [ -z "${VPS_HOST:-}" ]; then
+            echo "::error::VPS_SSH_KEY / VPS_HOST secrets are not set — pass them with 'secrets: inherit'."
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/vps_backup_key
+          chmod 600 ~/.ssh/vps_backup_key
+          if [ -n "${VPS_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS not set — falling back to ssh-keyscan (trust on first use on this runner). Set it from 'ssh-keyscan -H <host>' to pin the host key."
+            if ! ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || [ ! -s ~/.ssh/known_hosts ]; then
+              echo "::error::ssh-keyscan returned no host key — the box is unreachable from the runner."
+              exit 1
+            fi
+          fi
+
+      - name: Find the newest backup on the box and check its age + checksum
+        id: find
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          ssh_cmd="timeout 90 ssh -i $HOME/.ssh/vps_backup_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          # One ssh: newest daily by mtime, its age in seconds, and the sidecar check
+          # run on the box (so the copy is compared against a checksum the box wrote).
+          if ! report="$($ssh_cmd "${VPS_USER}@${VPS_HOST}" "set -e; d='${BACKUP_DIR}/daily'; f=\$(ls -1t \"\$d\"/*.db.gz 2>/dev/null | head -1); [ -n \"\$f\" ] || { echo NONE; exit 0; }; now=\$(date +%s); m=\$(stat -c %Y \"\$f\"); echo \"\$f\"; echo \$((now - m)); (cd \"\$d\" && sha256sum -c --quiet \"\$(basename \"\$f\").sha256\" && echo SHA_OK) || echo SHA_BAD" 2>/tmp/ssh.err)"; then
+            echo "::error::ssh to the box failed or timed out (diagnostic in the log below)."
+            sed 's/^/  /' /tmp/ssh.err || true
+            exit 1
+          fi
+          if [ "$report" = "NONE" ]; then
+            echo "::error::no backup found under ${BACKUP_DIR}/daily on the box — the backup timer has never run, or the directory is not readable by ${VPS_USER} (it must be group deploy, mode 2750; see the service's deploy/README)."
+            exit 1
+          fi
+          file="$(printf '%s\n' "$report" | sed -n 1p)"
+          age="$(printf '%s\n' "$report" | sed -n 2p)"
+          sha="$(printf '%s\n' "$report" | sed -n 3p)"
+          case "$file" in
+            "${BACKUP_DIR}/daily/${SERVICE}-"*.db.gz) : ;;
+            *) echo "::error::newest file '${file}' is not a ${SERVICE} daily backup — refusing to pull it."; exit 1 ;;
+          esac
+          case "$age" in ''|*[!0-9]*) echo "::error::could not read the backup's age from the box"; exit 1 ;; esac
+          if [ "$age" -gt $(( MAX_AGE_HOURS * 3600 )) ]; then
+            echo "::error::newest backup $(basename "$file") is $(( age / 3600 )) h old, older than ${MAX_AGE_HOURS} h — the box's ${SERVICE}-backup.timer is not producing backups (journalctl -u ${SERVICE}-backup)."
+            exit 1
+          fi
+          if [ "$sha" != "SHA_OK" ]; then
+            echo "::error::$(basename "$file") does not match its .sha256 sidecar ON THE BOX — the backup is corrupt where it was written."
+            exit 1
+          fi
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
+          echo "newest: $(basename "$file"), $(( age / 60 )) min old, sidecar ok on the box"
+
+      - name: Copy it and verify on the runner
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          FILE: ${{ steps.find.outputs.file }}
+          NAME: ${{ steps.find.outputs.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p pulled && cd pulled
+          scp_cmd="timeout 600 scp -i $HOME/.ssh/vps_backup_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -q"
+          if ! $scp_cmd "${VPS_USER}@${VPS_HOST}:${FILE}" "${VPS_USER}@${VPS_HOST}:${FILE}.sha256" . 2>/tmp/scp.err; then
+            echo "::error::scp of ${NAME} failed (diagnostic in the log below)."
+            sed 's/^/  /' /tmp/scp.err || true
+            exit 1
+          fi
+          sha256sum -c --quiet "${NAME}.sha256" || { echo "::error::${NAME} changed in transit — sha256 mismatch after the copy."; exit 1; }
+          gzip -t "$NAME" || { echo "::error::${NAME} is not a sound gzip."; exit 1; }
+          command -v sqlite3 >/dev/null || sudo apt-get install -y -qq sqlite3 >/dev/null
+          gunzip -c "$NAME" > restored.db
+          ok="$(sqlite3 restored.db 'PRAGMA integrity_check;' | head -1)"
+          [ "$ok" = "ok" ] || { echo "::error::PRAGMA integrity_check on the restored ${NAME} says: ${ok}"; exit 1; }
+          tables="$(sqlite3 restored.db "select count(*) from sqlite_master where type='table'")"
+          rm -f restored.db
+          {
+            echo "## ${SERVICE} backup pulled"
+            echo "- file: \`${NAME}\` ($(du -h "$NAME" | cut -f1)), sha256 verified on the box and after the copy"
+            echo "- restorable: gzip sound, \`PRAGMA integrity_check\` ok, ${tables} tables"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "verified ${NAME}: integrity ok, ${tables} tables"
+
+      - name: Store as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.service }}-backup-${{ steps.find.outputs.name }}
+          path: pulled/
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+          compression-level: 0
+
+      - name: Shred the key
+        if: always()
+        run: shred -u ~/.ssh/vps_backup_key 2>/dev/null || rm -f ~/.ssh/vps_backup_key
