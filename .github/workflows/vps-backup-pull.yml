@@ -46,7 +46,7 @@ on:
         required: true
         type: string
       backup_dir:
-        description: "Backup root on the box. Default /var/backups/<service>."
+        description: "Backup root on the box, absolute, [A-Za-z0-9._/-] only. Default /var/backups/<service>."
         required: false
         type: string
         default: ""
@@ -90,9 +90,14 @@ jobs:
           case "$SERVICE" in
             *[!a-z0-9-]*|"") echo "::error::service must be [a-z0-9-]+, got '$SERVICE'"; exit 1 ;;
           esac
+          # Absolute and a plain path: it is interpolated into the remote
+          # command below, so nothing a shell could interpret is allowed.
           case "$BACKUP_DIR" in
             /*) ;;
             *) echo "::error::backup_dir must be absolute, got '$BACKUP_DIR'"; exit 1 ;;
+          esac
+          case "$BACKUP_DIR" in
+            *[!A-Za-z0-9._/-]*) echo "::error::backup_dir may only contain [A-Za-z0-9._/-], got '$BACKUP_DIR'"; exit 1 ;;
           esac
           case "$MAX_AGE_HOURS" in
             ''|*[!0-9]*) echo "::error::max_age_hours must be a whole number of hours, got '$MAX_AGE_HOURS'"; exit 1 ;;
