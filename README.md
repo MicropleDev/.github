@@ -22,6 +22,7 @@ GitHub treats a repo named `.github` specially: its `profile/README.md` is the p
 | `.github/workflows/go-dev-release.yml` | same | dev cuts (auto on push to main) |
 | `.github/workflows/go-vps-ci.yml` | podcast-server, weather-server, sports-server (VPS, linux/amd64) | CI: lint + vet + race tests + build |
 | `.github/workflows/go-vps-release.yml` | same | stable cuts (manual); amd64, no minisign, see release-scheme.md |
+| `.github/workflows/vps-backup-pull.yml` | same | daily: pulls the service's newest SQLite backup off the box as `deploy`, verifies it (sha256 on both sides, gzip, `integrity_check`), stores it as a 90-day artifact; fails when the box's backup is older than 26 h (OPS-04) |
 | `.github/workflows/python-tarball-release.yml` | superdog, superdog-listener | stable cuts (manual) |
 | `.github/workflows/python-tarball-dev-release.yml` | same | dev cuts (auto on push to main) |
 | `.github/workflows/flutter-ui-release.yml` | watchdog, setupdog, updatedog | stable cuts (manual) |
