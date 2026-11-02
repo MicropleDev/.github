@@ -1,7 +1,7 @@
 # Reusable workflow for cutting a DEV (prerelease) release of a Go service.
 #
 # Auto-invoked from each consumer repo's `push to main` trigger. Used by
-# heisenberg, weather-server, sports-server, gustavo. Per-repo wrapper example:
+# heisenberg, gustavo, mediadog (with private_repo). Per-repo wrapper example:
 #
 #   # .github/workflows/dev-release.yml in a consumer repo
 #   name: Dev release
@@ -52,6 +52,16 @@ on:
         description: "Go build target relative to repo root."
         required: true
         type: string
+      private_repo:
+        description: >-
+          Optional: one private MicropleDev repo this build fetches as a Go
+          module (e.g. 'dogserver'). Fetched read-only with the org GitHub
+          App (WEATHER_APP_ID / WEATHER_APP_PRIVATE_KEY), the same way
+          go-vps-ci.yml does; the caller must pass `secrets: inherit`.
+          Empty (the default) changes nothing.
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: "Computed or reused version without the 'v' prefix."
@@ -65,6 +75,11 @@ on:
 
 permissions:
   contents: write
+
+# Only set when private_repo is given, so the public-module builds are
+# untouched: GOPROXY and the checksum DB keep verifying everything else.
+env:
+  GOPRIVATE: ${{ inputs.private_repo != '' && format('github.com/MicropleDev/{0}', inputs.private_repo) || '' }}
 
 # Serialize dev cuts per (caller repo, ref). Rapid pushes to main can otherwise
 # race on tag creation. Never cancel an in-flight run — it may already have
@@ -123,6 +138,28 @@ jobs:
             echo "build_date=$BUILD_DATE"
             echo "tag_existed=$TAG_EXISTED"
           } >> "$GITHUB_OUTPUT"
+
+      # Private Go module (private_repo). Least privilege: one repository,
+      # contents read, and the git rewrite covers that module's URL only,
+      # so the workflow's own git identity (the tag push below) is untouched.
+      - name: Create GitHub App token for the private module
+        if: inputs.private_repo != ''
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.WEATHER_APP_ID }}
+          private-key: ${{ secrets.WEATHER_APP_PRIVATE_KEY }}
+          owner: MicropleDev
+          repositories: ${{ inputs.private_repo }}
+          permission-contents: read
+
+      - name: Configure Git for the private module
+        if: inputs.private_repo != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PRIVATE_REPO: ${{ inputs.private_repo }}
+        run: |
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/MicropleDev/${PRIVATE_REPO}".insteadOf "https://github.com/MicropleDev/${PRIVATE_REPO}"
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
